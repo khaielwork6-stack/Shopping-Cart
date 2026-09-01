@@ -63,10 +63,15 @@ EconomyConfig.Upgrades = {
 	pushPower = { BaseCost = 10, Growth = 1.27 },
 }
 
--- �3.7.1 Per-level effect constants
+-- �3.7.1 Per-level effect constants. BaseCapacity and BaseWalkSpeed are not
+-- pinned to a specific number anywhere in the Guide's �3 -- BaseCapacity
+-- continues Phase 1's stopgap hardcoded value (10) as the real level-0
+-- value, and BaseWalkSpeed uses Roblox's own default Humanoid.WalkSpeed
+-- (16 studs/s) as the multiplier's base.
 EconomyConfig.UpgradeEffects = {
+	capacity = { BaseCapacity = 10 }, -- +1 train slot per level (Capacity(level) = 10 + level)
 	agility = { CollectTimeBase = 1.0, CollectTimeDecay = 0.965 }, -- CollectTime = 1.0 * 0.965^level
-	mobility = { WalkSpeedBonusPerLevel = 0.05 }, -- BaseSpeed * (1 + 0.05*level)
+	mobility = { BaseWalkSpeed = 16, WalkSpeedBonusPerLevel = 0.05 }, -- BaseSpeed * (1 + 0.05*level)
 	range = {
 		RadiusBonusPerLevel = 0.05, -- BaseRadius * (1 + 0.05*level)
 		TravelTimeDecay = 0.97, -- effective inter-cart travel time * 0.97^level

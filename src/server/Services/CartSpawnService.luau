@@ -1,8 +1,8 @@
 --!strict
--- Per-zone spawn/despawn loop (�5.2/�4.1.1). Phase 1: basic version -- fixed-
--- count spawn at World1/Zone1 only, no per-zone despawn budget curve yet
--- (that generalizes in Phase 3/5). Proximity claim + collection timer per
--- �4.1.2.
+-- Per-zone spawn/despawn loop (�5.2/�4.1.1). Phase 2: fixed-count spawn at
+-- World1/Zone1 only (per-zone despawn budget curve generalizes in Phase
+-- 3/5), now with a rarity roll at spawn time (�4.1.1) and Capacity/
+-- Agility/Range-driven claim behavior (�3.7) sourced from UpgradeService.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,17 +11,17 @@ local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
+local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
+local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local EconomyService = require(script.Parent.EconomyService)
+local UpgradeService = require(script.Parent.UpgradeService)
 
 local CartSpawnService = {}
 
--- Phase 1 stopgaps -- both become real, purchasable stats in Phase 2.
-local HARDCODED_CAPACITY = 10
-local BASE_COLLECT_TIME = EconomyConfig.UpgradeEffects.agility.CollectTimeBase -- Agility level 0
-
 type ActiveCart = {
 	cart: Model,
+	rarity: string,
 	claiming: Player?,
 }
 
@@ -41,11 +41,26 @@ local function getSpawnAttachments(): { Attachment }
 	return attachments
 end
 
+-- �4.1.1: rarity is rolled at spawn time, not collection time. Luck is
+-- fixed at x1 until Phase 7 wires a real per-player Luck value through here.
+local function rollRarity(): string
+	local weights = EconomyMath.LuckReallocate(1)
+	return EconomyMath.RollRarity(weights)
+end
+
 local function spawnCartAt(attachment: Attachment)
+	local rarity = rollRarity()
 	local cart = cartTemplate:Clone()
 	cart:PivotTo(CFrame.new(attachment.WorldPosition))
+
+	local display = CartData.RarityDisplay[rarity]
+	local body = cart:FindFirstChild("Body") :: BasePart?
+	if body and display then
+		body.Color = Color3.new(display.Color[1], display.Color[2], display.Color[3])
+	end
+
 	cart.Parent = zone1
-	activeCarts[attachment.Name] = { cart = cart, claiming = nil }
+	activeCarts[attachment.Name] = { cart = cart, rarity = rarity, claiming = nil }
 end
 
 local function despawnAndScheduleRespawn(attachment: Attachment)
@@ -66,13 +81,15 @@ local function tryClaimCart(player: Player, attachment: Attachment)
 		return
 	end
 
-	if EconomyService.GetTrainCount(player) >= HARDCODED_CAPACITY then
+	if EconomyService.GetTrainCount(player) >= UpgradeService.GetCapacity(player) then
 		return
 	end
 
 	entry.claiming = player
 
-	task.delay(BASE_COLLECT_TIME, function()
+	local collectTime = EconomyMath.GetAgilityCollectTime(UpgradeService.GetLevel(player, "agility"))
+
+	task.delay(collectTime, function()
 		local stillActive = activeCarts[attachment.Name]
 		if not stillActive or stillActive.claiming ~= player then
 			return -- cart was already resolved/removed
@@ -84,13 +101,14 @@ local function tryClaimCart(player: Player, attachment: Attachment)
 			return
 		end
 
+		local rarity = stillActive.rarity
 		stillActive.cart:Destroy()
 		despawnAndScheduleRespawn(attachment)
 
-		EconomyService.AddCartToTrain(player, { rarity = "Common", world = 1, zone = 1 })
+		EconomyService.AddCartToTrain(player, { rarity = rarity, world = 1, zone = 1 })
 
 		local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
-		cartClaimed:FireClient(player, { rarity = "Common" })
+		cartClaimed:FireClient(player, { rarity = rarity })
 	end)
 end
 
@@ -100,11 +118,14 @@ local function heartbeatCheck()
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 		if root then
+			local claimRadius = EconomyConfig.Collection.BaseClaimRadius
+				* EconomyMath.GetRangeRadiusMultiplier(UpgradeService.GetLevel(player, "range"))
+
 			for _, attachment in attachments do
 				local entry = activeCarts[attachment.Name]
 				if entry and not entry.claiming then
 					local distance = (root.Position - attachment.WorldPosition).Magnitude
-					if distance <= EconomyConfig.Collection.BaseClaimRadius then
+					if distance <= claimRadius then
 						tryClaimCart(player, attachment)
 					end
 				end

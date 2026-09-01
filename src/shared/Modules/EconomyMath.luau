@@ -104,6 +104,15 @@ function EconomyMath.GetAgilityCollectTime(agilityLevel: number): number
 	return cfg.CollectTimeBase * (cfg.CollectTimeDecay ^ agilityLevel)
 end
 
+function EconomyMath.GetTrainCapacity(capacityLevel: number): number
+	return EconomyConfig.UpgradeEffects.capacity.BaseCapacity + capacityLevel
+end
+
+function EconomyMath.GetMobilityWalkSpeed(mobilityLevel: number): number
+	local cfg = EconomyConfig.UpgradeEffects.mobility
+	return cfg.BaseWalkSpeed * (1 + cfg.WalkSpeedBonusPerLevel * mobilityLevel)
+end
+
 function EconomyMath.GetMobilitySpeedMultiplier(mobilityLevel: number): number
 	return 1 + EconomyConfig.UpgradeEffects.mobility.WalkSpeedBonusPerLevel * mobilityLevel
 end
@@ -139,6 +148,21 @@ function EconomyMath.LuckReallocate(luck: number): { [string]: number }
 	weights.Legendary = base.Legendary.Weight + moved * (base.Legendary.Weight / highTotal)
 
 	return weights
+end
+
+-- �4.1.1 Weighted rarity roll from a weights table (base EconomyConfig.Rarity
+-- weights, or a Luck-reallocated table from LuckReallocate). Kept generic on
+-- the weights argument so the caller decides which Luck value applies.
+function EconomyMath.RollRarity(weights: { [string]: number }): RarityName
+	local roll = math.random()
+	local cumulative = 0
+	for _, rarity in EconomyConfig.RarityOrder do
+		cumulative += weights[rarity] or 0
+		if roll <= cumulative then
+			return rarity
+		end
+	end
+	return EconomyConfig.RarityOrder[#EconomyConfig.RarityOrder] -- floating-point edge case fallback
 end
 
 -- �4.5 Loot drop chance shares the same bounded shift term as rarity

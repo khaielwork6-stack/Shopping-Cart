@@ -57,6 +57,22 @@ function EconomyService.AddCartToTrain(player: Player, item: TrainItem)
 	pushPlayerData(player)
 end
 
+-- Public API consumed by UpgradeService (and any future currency sink) --
+-- EconomyService remains the single owner of currency mutation (�5.2).
+function EconomyService.GetCash(player: Player): number
+	return getState(player).cash
+end
+
+function EconomyService.TrySpendCash(player: Player, amount: number): boolean
+	local state = getState(player)
+	if state.cash < amount then
+		return false
+	end
+	state.cash -= amount
+	pushPlayerData(player)
+	return true
+end
+
 -- Server-side "is the player inside the Corral trigger" check -- never
 -- trusts a client-reported position (�5.6).
 local function isPlayerAtCorral(player: Player): boolean

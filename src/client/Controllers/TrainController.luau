@@ -12,9 +12,10 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
 
 local TrainController = {}
 
@@ -91,6 +92,38 @@ local function onHeartbeat()
 	end
 end
 
+-- �4.1.6/�8: rarity-tier visual feedback fires once, at collection, not
+-- continuously. Color tint on the pickup itself is server-side (visible in
+-- the Zone before collection); this one-shot wisp is the collection-moment
+-- particle burst for Rare+.
+local function playRarityWisp(rarity: string)
+	local display = CartData.RarityDisplay[rarity]
+	if not display or not display.HasParticleWisp then
+		return
+	end
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+
+	local attachment = Instance.new("Attachment")
+	attachment.Parent = root
+
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Color = ColorSequence.new(Color3.new(display.Color[1], display.Color[2], display.Color[3]))
+	emitter.Lifetime = NumberRange.new(0.4, 0.6)
+	emitter.Speed = NumberRange.new(4, 6)
+	emitter.SpreadAngle = Vector2.new(180, 180)
+	emitter.Size = NumberSequence.new(0.5)
+	emitter.Rate = 0
+	emitter.Parent = attachment
+
+	emitter:Emit(16)
+	Debris:AddItem(attachment, 1)
+end
+
 local function tryReturnCarts(remotesFolder: Folder)
 	if returnDebounce then
 		return
@@ -108,9 +141,18 @@ function TrainController.Init()
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	cartTemplate = ReplicatedStorage.Assets.Placeholders.PH_Cart_Common
 
+	-- PlayerDataUpdated pushes a diff (�5.2), not a full replace -- different
+	-- Services push different subsets of fields, so every field is optional.
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: { trainCount: number, cash: number })
-		setTrainCount(data.trainCount)
+	playerDataUpdated.OnClientEvent:Connect(function(data: { trainCount: number? })
+		if data.trainCount ~= nil then
+			setTrainCount(data.trainCount)
+		end
+	end)
+
+	local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
+	cartClaimed.OnClientEvent:Connect(function(data: { rarity: string })
+		playRarityWisp(data.rarity)
 	end)
 
 	RunService.Heartbeat:Connect(onHeartbeat)
