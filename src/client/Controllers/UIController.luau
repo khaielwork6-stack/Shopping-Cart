@@ -12,6 +12,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local UpgradeData = require(ReplicatedStorage.Shared.Configs.UpgradeData)
 local RebirthConfig = require(ReplicatedStorage.Shared.Configs.RebirthConfig)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 
 local UIController = {}
 
@@ -31,6 +32,8 @@ type PlayerDataCache = {
 	rebirthCount: number,
 	rebirthPushPowerMultiplier: number,
 	rebirthCashMultiplier: number,
+	currentWorld: number,
+	unlockedWorlds: { [number]: boolean },
 }
 
 local cache: PlayerDataCache = {
@@ -45,6 +48,8 @@ local cache: PlayerDataCache = {
 	rebirthCount = 0,
 	rebirthPushPowerMultiplier = 1,
 	rebirthCashMultiplier = 1,
+	currentWorld = 1,
+	unlockedWorlds = { [1] = true },
 }
 
 local cashLabel: TextLabel
@@ -372,12 +377,19 @@ end
 local ZONES_PER_WORLD = EconomyConfig.Cart.ZonesPerWorld
 
 local function renderHud()
-	cashLabel.Text = string.format("Cash: %d   Train: %d", cache.cash, cache.trainCount)
+	local worldEntry = WorldData.GetWorld(cache.currentWorld)
+	cashLabel.Text = string.format(
+		"Cash: %d   Train: %d   World %d: %s",
+		cache.cash,
+		cache.trainCount,
+		cache.currentWorld,
+		worldEntry and worldEntry.Name or "?"
+	)
 
 	local pushLevel = cache.upgrades.pushPower or 0
 	local effectivePower = EconomyMath.GetEffectivePushPower(pushLevel, cache.rebirthPushPowerMultiplier, 1)
 	local nextZone = math.min(cache.unlockedZoneIndex + 1, ZONES_PER_WORLD)
-	local nextRequirement = EconomyMath.GetPowerRequirement(1, nextZone)
+	local nextRequirement = EconomyMath.GetPowerRequirement(cache.currentWorld, nextZone)
 	pushPowerLabel.Text = string.format(
 		"Push Power: Lv%d (%.1f / %.1f for Zone %d)   Unlocked: Zone %d",
 		pushLevel,
@@ -399,18 +411,137 @@ local function renderHud()
 	)
 end
 
+-- Minimal �9.10-style toast (top-center, auto-dismiss) for the one-time
+-- World-unlock banner (�4.7/�8's "banner names the new World").
+local toastLabel: TextLabel
+local function showToast(text: string)
+	toastLabel.Text = text
+	toastLabel.Visible = true
+	task.delay(3, function()
+		toastLabel.Visible = false
+	end)
+end
+
+-- �9.4 World Portal: a lightweight, non-blocking confirmation on touch
+-- (not an instant teleport) -- "Enter World N: Name?" / "Not yet".
+local portalPromptFrame: Frame
+local portalPromptLabel: TextLabel
+local pendingPortalWorldId = 0
+
+local function buildWorldUI(playerGui: PlayerGui, requestEnterWorldPortal: RemoteFunction)
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "WorldUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = playerGui
+
+	local toast = Instance.new("TextLabel")
+	toast.Name = "Toast"
+	toast.AnchorPoint = Vector2.new(0.5, 0)
+	toast.Position = UDim2.new(0.5, 0, 0, 160)
+	toast.Size = UDim2.new(0, 400, 0, 36)
+	toast.BackgroundColor3 = Color3.fromRGB(200, 160, 40)
+	toast.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toast.Font = Enum.Font.GothamBold
+	toast.TextSize = 16
+	toast.Visible = false
+	toast.Parent = screenGui
+	toastLabel = toast
+
+	local prompt = Instance.new("Frame")
+	prompt.Name = "PortalPrompt"
+	prompt.AnchorPoint = Vector2.new(0.5, 0.5)
+	prompt.Position = UDim2.new(0.5, 0, 0.5, 0)
+	prompt.Size = UDim2.new(0, 340, 0, 130)
+	prompt.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+	prompt.Visible = false
+	prompt.Parent = screenGui
+	portalPromptFrame = prompt
+
+	local promptLabel = Instance.new("TextLabel")
+	promptLabel.Name = "PromptLabel"
+	promptLabel.Position = UDim2.new(0, 8, 0, 8)
+	promptLabel.Size = UDim2.new(1, -16, 0, 50)
+	promptLabel.BackgroundTransparency = 1
+	promptLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	promptLabel.Font = Enum.Font.GothamBold
+	promptLabel.TextSize = 16
+	promptLabel.TextWrapped = true
+	promptLabel.Text = "Enter World?"
+	promptLabel.Parent = prompt
+	portalPromptLabel = promptLabel
+
+	local enterButton = Instance.new("TextButton")
+	enterButton.Position = UDim2.new(0, 12, 1, -48)
+	enterButton.Size = UDim2.new(0.5, -18, 0, 38)
+	enterButton.BackgroundColor3 = Color3.fromRGB(60, 180, 90)
+	enterButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	enterButton.Font = Enum.Font.GothamBold
+	enterButton.TextSize = 15
+	enterButton.Text = "Enter"
+	enterButton.Parent = prompt
+
+	local notYetButton = Instance.new("TextButton")
+	notYetButton.Position = UDim2.new(0.5, 6, 1, -48)
+	notYetButton.Size = UDim2.new(0.5, -18, 0, 38)
+	notYetButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+	notYetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	notYetButton.Font = Enum.Font.Gotham
+	notYetButton.TextSize = 15
+	notYetButton.Text = "Not yet"
+	notYetButton.Parent = prompt
+
+	notYetButton.MouseButton1Click:Connect(function()
+		prompt.Visible = false
+	end)
+
+	enterButton.MouseButton1Click:Connect(function()
+		prompt.Visible = false
+		requestEnterWorldPortal:InvokeServer(pendingPortalWorldId)
+	end)
+
+	-- Every unlocked-so-far World Portal (Worlds 1-4; World 5 has none, per
+	-- Phase 5's own scope) opens the prompt on touch -- server re-validates
+	-- unlock state regardless of what the client shows (�5.6).
+	local worldsFolder = workspace:WaitForChild("Worlds")
+	for _, worldEntry in WorldData.Worlds do
+		if worldEntry.Id >= 5 then
+			continue
+		end
+		local worldFolder = worldsFolder:WaitForChild(worldEntry.FolderName)
+		local portal = worldFolder:FindFirstChild("WorldPortal") :: BasePart?
+		if portal then
+			local destination = WorldData.GetWorld(worldEntry.Id + 1)
+			portal.Touched:Connect(function(hit: BasePart)
+				local character = player.Character
+				if character and hit:IsDescendantOf(character) and destination then
+					pendingPortalWorldId = destination.Id
+					portalPromptLabel.Text = string.format("Enter World %d: %s?", destination.Id, destination.Name)
+					portalPromptFrame.Visible = true
+				end
+			end)
+		end
+	end
+end
+
 function UIController.Init()
 	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local requestPurchaseUpgrade = remotesFolder:FindFirstChild("RequestPurchaseUpgrade") :: RemoteFunction
 	local requestRebirth = remotesFolder:FindFirstChild("RequestRebirth") :: RemoteFunction
+	local requestEnterWorldPortal = remotesFolder:FindFirstChild("RequestEnterWorldPortal") :: RemoteFunction
 
 	cashLabel = buildDebugHud(playerGui)
 	upgradeFrame = buildUpgradeMenu(playerGui, requestPurchaseUpgrade)
 	buildRebirthUI(playerGui, requestRebirth)
+	buildWorldUI(playerGui, requestEnterWorldPortal)
 	renderUpgradeMenu()
 	renderHud()
 	renderRebirthBanner()
+
+	local worldUnlocked = remotesFolder:FindFirstChild("WorldUnlocked") :: RemoteEvent
+	worldUnlocked.OnClientEvent:Connect(function(data: { worldId: number, worldName: string })
+		showToast(string.format("New World Unlocked: %s!", data.worldName))
+	end)
 
 	-- PlayerDataUpdated pushes a diff (�5.2) -- merge whichever fields are
 	-- present rather than assuming a full replace.
@@ -427,6 +558,8 @@ function UIController.Init()
 		rebirthCount: number?,
 		rebirthPushPowerMultiplier: number?,
 		rebirthCashMultiplier: number?,
+		currentWorld: number?,
+		unlockedWorlds: { number }?,
 	})
 		-- �4.4: "the banner re-appears each time the player returns a cart
 		-- while still eligible" -- a return is the only path that raises
@@ -468,6 +601,16 @@ function UIController.Init()
 		end
 		if data.rebirthCashMultiplier ~= nil then
 			cache.rebirthCashMultiplier = data.rebirthCashMultiplier
+		end
+		if data.currentWorld ~= nil then
+			cache.currentWorld = data.currentWorld
+		end
+		if data.unlockedWorlds ~= nil then
+			local set = {}
+			for _, worldId in data.unlockedWorlds do
+				set[worldId] = true
+			end
+			cache.unlockedWorlds = set
 		end
 
 		renderHud()

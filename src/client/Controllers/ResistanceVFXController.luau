@@ -18,12 +18,12 @@ local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local ZoneData = require(ReplicatedStorage.Shared.Configs.ZoneData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 
 local ResistanceVFXController = {}
 
-local CURRENT_WORLD = 1 -- Phase 3 is World 1 only
 local ZONES_PER_WORLD = EconomyConfig.Cart.ZonesPerWorld
 
 -- �4.2's named thresholds.
@@ -32,6 +32,7 @@ local LIGHT_THRESHOLD = 0.85
 
 local player = Players.LocalPlayer
 local cachedPushPowerLevel = 0
+local cachedCurrentWorld = 1
 local dragEmitter: ParticleEmitter?
 local zoneUnlockSound: Sound?
 
@@ -82,17 +83,21 @@ local function onHeartbeat()
 		return
 	end
 
+	-- Z-banding is identical across every World (only X differs, per-World),
+	-- so this needs no World-specific adjustment -- only which World's
+	-- PowerRequirement table applies does.
 	local zoneIndex = ZoneData.GetZoneIndexFromWorldZ(root.Position.Z, ZONES_PER_WORLD)
 	local effectivePushPower = EconomyMath.GetEffectivePushPower(cachedPushPowerLevel, 1, 1)
-	local requirement = EconomyMath.GetPowerRequirement(CURRENT_WORLD, zoneIndex)
+	local requirement = EconomyMath.GetPowerRequirement(cachedCurrentWorld, zoneIndex)
 	local speedFactor = EconomyMath.GetSpeedFactor(effectivePushPower, requirement)
 
 	applyResistanceVFX(root, speedFactor)
 end
 
 local function playZoneUnlockFanfare()
-	local world1 = Workspace:FindFirstChild("Worlds") and Workspace.Worlds:FindFirstChild("World1_ParkingLot")
-	local corral = world1 and world1:FindFirstChild("Corral") :: BasePart?
+	local worldEntry = WorldData.GetWorld(cachedCurrentWorld)
+	local worldFolder = worldEntry and Workspace:FindFirstChild("Worlds") and Workspace.Worlds:FindFirstChild(worldEntry.FolderName)
+	local corral = worldFolder and worldFolder:FindFirstChild("Corral") :: BasePart?
 	if not corral then
 		return
 	end
@@ -130,14 +135,24 @@ function ResistanceVFXController.Init()
 	zoneUnlockSound = sound
 
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: { upgrades: { [string]: number }? })
+	playerDataUpdated.OnClientEvent:Connect(function(data: { upgrades: { [string]: number }?, currentWorld: number? })
 		if data.upgrades and data.upgrades.pushPower ~= nil then
 			cachedPushPowerLevel = data.upgrades.pushPower
+		end
+		if data.currentWorld ~= nil then
+			cachedCurrentWorld = data.currentWorld
 		end
 	end)
 
 	local zoneUnlocked = remotesFolder:FindFirstChild("ZoneUnlocked") :: RemoteEvent
 	zoneUnlocked.OnClientEvent:Connect(function()
+		playZoneUnlockFanfare()
+	end)
+
+	-- �4.7/�8 World unlock sequence: reuse the same Corral-burst fanfare --
+	-- the Guide's full "portal visibly activates" beat is Phase 10 polish.
+	local worldUnlocked = remotesFolder:FindFirstChild("WorldUnlocked") :: RemoteEvent
+	worldUnlocked.OnClientEvent:Connect(function()
 		playZoneUnlockFanfare()
 	end)
 

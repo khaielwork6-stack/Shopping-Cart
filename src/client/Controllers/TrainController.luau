@@ -16,6 +16,7 @@ local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 
 local TrainController = {}
 
@@ -159,14 +160,23 @@ function TrainController.Init()
 
 	RunService.Heartbeat:Connect(onHeartbeat)
 
-	local world1 = Workspace:WaitForChild("Worlds"):WaitForChild("World1_ParkingLot")
-	local corral = world1:WaitForChild("Corral") :: BasePart
-	corral.Touched:Connect(function(hit: BasePart)
-		local character = player.Character
-		if character and hit:IsDescendantOf(character) then
-			tryReturnCarts(remotesFolder)
-		end
-	end)
+	-- Phase 5: a player can be in any of the 5 Worlds (Portal travel), so
+	-- every World's Corral needs its own Touched connection -- the server
+	-- only actually honors a return while it's the player's CURRENT World's
+	-- Corral (WorldService), so touching another World's Corral (never
+	-- possible in practice, since physical position always matches
+	-- currentWorld) would just harmlessly fail server-side.
+	local worldsFolder = Workspace:WaitForChild("Worlds")
+	for _, worldEntry in WorldData.Worlds do
+		local worldFolder = worldsFolder:WaitForChild(worldEntry.FolderName)
+		local corral = worldFolder:WaitForChild("Corral") :: BasePart
+		corral.Touched:Connect(function(hit: BasePart)
+			local character = player.Character
+			if character and hit:IsDescendantOf(character) then
+				tryReturnCarts(remotesFolder)
+			end
+		end)
+	end
 
 	print("[TrainController] Init")
 end

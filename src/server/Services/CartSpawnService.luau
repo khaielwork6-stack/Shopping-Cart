@@ -1,12 +1,12 @@
 --!strict
--- Per-zone spawn/despawn loop (�5.2/�4.1.1). Phase 3: generalizes across all
--- 8 Zones of World 1 (per-zone despawn budget curve formula still deferred
--- to Phase 5/12 -- each Zone keeps Phase 1/2's small fixed spawn-point
--- count for now). Claim eligibility is now gated per-cart by the Zone it
--- spawned in against the player's unlocked-Zone frontier (�3.5.4) --
+-- Per-zone spawn/despawn loop (�5.2/�4.1.1). Phase 5: generalizes across all
+-- 5 Worlds x 8 Zones (per-zone despawn budget curve formula still deferred
+-- to Phase 12 -- each Zone keeps Phase 1/2's small fixed spawn-point count
+-- for now). Claim eligibility is gated per-cart by (a) matching the
+-- player's current World (WorldService) and (b) the Zone it spawned in
+-- against that World's unlocked-Zone frontier for this player (�3.5.4) --
 -- earlier Zones stay fully farmable, a Zone beyond the frontier simply
--- doesn't serve that player yet (per-cart, so a further-along player in the
--- same server can still farm it).
+-- doesn't serve that player yet.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,37 +15,39 @@ local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local EconomyService = require(script.Parent.EconomyService)
 local UpgradeService = require(script.Parent.UpgradeService)
 local PushPowerService = require(script.Parent.PushPowerService)
+local WorldService = require(script.Parent.WorldService)
 
 local CartSpawnService = {}
-
-local CURRENT_WORLD = 1 -- Phase 3 is World 1 only; Phase 5 generalizes
 
 type ActiveCart = {
 	cart: Model,
 	rarity: string,
+	worldId: number,
 	zoneIndex: number,
 	claiming: Player?,
 }
 
 type ZoneRuntime = {
+	worldId: number,
 	zoneIndex: number,
 	folder: Folder,
 	attachments: { Attachment },
 }
 
-local activeCarts: { [string]: ActiveCart } = {} -- keyed "<zoneIndex>_<attachmentName>"
-local zones: { ZoneRuntime } = {}
+local activeCarts: { [string]: ActiveCart } = {} -- keyed "<worldId>_<zoneIndex>_<attachmentName>"
+local zonesByWorld: { [number]: { ZoneRuntime } } = {}
 local remotesFolder: Folder
 local cartTemplate: Model
 
-local function cartKey(zoneIndex: number, attachmentName: string): string
-	return zoneIndex .. "_" .. attachmentName
+local function cartKey(worldId: number, zoneIndex: number, attachmentName: string): string
+	return worldId .. "_" .. zoneIndex .. "_" .. attachmentName
 end
 
 -- �4.1.1: rarity is rolled at spawn time, not collection time. Luck is
@@ -67,16 +69,17 @@ local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
 	end
 
 	cart.Parent = zone.folder
-	activeCarts[cartKey(zone.zoneIndex, attachment.Name)] = {
+	activeCarts[cartKey(zone.worldId, zone.zoneIndex, attachment.Name)] = {
 		cart = cart,
 		rarity = rarity,
+		worldId = zone.worldId,
 		zoneIndex = zone.zoneIndex,
 		claiming = nil,
 	}
 end
 
 local function despawnAndScheduleRespawn(zone: ZoneRuntime, attachment: Attachment)
-	local key = cartKey(zone.zoneIndex, attachment.Name)
+	local key = cartKey(zone.worldId, zone.zoneIndex, attachment.Name)
 	activeCarts[key] = nil
 	local respawnDelay = math.random(EconomyConfig.Spawn.RespawnDelayMin, EconomyConfig.Spawn.RespawnDelayMax)
 	task.delay(respawnDelay, function()
@@ -87,16 +90,16 @@ local function despawnAndScheduleRespawn(zone: ZoneRuntime, attachment: Attachme
 end
 
 -- Server-authoritative claim: proximity + open Capacity + Zone unlocked for
--- this player, exclusive-on-touch (�4.1.5 -- no client ever decides who
--- "gets" a cart).
+-- this player in this World, exclusive-on-touch (�4.1.5 -- no client ever
+-- decides who "gets" a cart).
 local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attachment)
-	local key = cartKey(zone.zoneIndex, attachment.Name)
+	local key = cartKey(zone.worldId, zone.zoneIndex, attachment.Name)
 	local entry = activeCarts[key]
 	if not entry or entry.claiming then
 		return
 	end
 
-	if zone.zoneIndex > PushPowerService.GetUnlockedZoneIndex(player) then
+	if zone.zoneIndex > PushPowerService.GetUnlockedZoneIndex(player, zone.worldId) then
 		return -- �3.5.4: this Zone isn't this player's active cart-source yet
 	end
 
@@ -124,7 +127,7 @@ local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attac
 		stillActive.cart:Destroy()
 		despawnAndScheduleRespawn(zone, attachment)
 
-		EconomyService.AddCartToTrain(player, { rarity = rarity, world = CURRENT_WORLD, zone = zone.zoneIndex })
+		EconomyService.AddCartToTrain(player, { rarity = rarity, world = zone.worldId, zone = zone.zoneIndex })
 
 		local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
 		cartClaimed:FireClient(player, { rarity = rarity })
@@ -133,6 +136,7 @@ end
 
 local function heartbeatCheck()
 	for _, player in Players:GetPlayers() do
+		WorldService.CheckWorldUnlocks(player)
 		PushPowerService.CheckZoneUnlocks(player)
 
 		local character = player.Character
@@ -141,13 +145,20 @@ local function heartbeatCheck()
 			local claimRadius = EconomyConfig.Collection.BaseClaimRadius
 				* EconomyMath.GetRangeRadiusMultiplier(UpgradeService.GetLevel(player, "range"))
 
-			for _, zone in zones do
-				for _, attachment in zone.attachments do
-					local entry = activeCarts[cartKey(zone.zoneIndex, attachment.Name)]
-					if entry and not entry.claiming then
-						local distance = (root.Position - attachment.WorldPosition).Magnitude
-						if distance <= claimRadius then
-							tryClaimCart(player, zone, attachment)
+			-- Only the player's CURRENT World's Zones are checked -- a cart
+			-- in a World the player isn't in can never be in claim range
+			-- anyway (the Worlds are physically far apart in Workspace), so
+			-- this is both a correctness gate and a performance one.
+			local currentWorldZones = zonesByWorld[WorldService.GetCurrentWorld(player)]
+			if currentWorldZones then
+				for _, zone in currentWorldZones do
+					for _, attachment in zone.attachments do
+						local entry = activeCarts[cartKey(zone.worldId, zone.zoneIndex, attachment.Name)]
+						if entry and not entry.claiming then
+							local distance = (root.Position - attachment.WorldPosition).Magnitude
+							if distance <= claimRadius then
+								tryClaimCart(player, zone, attachment)
+							end
 						end
 					end
 				end
@@ -156,8 +167,8 @@ local function heartbeatCheck()
 	end
 end
 
-local function buildZoneRuntime(zoneIndex: number): ZoneRuntime
-	local zoneFolder = Workspace.Worlds.World1_ParkingLot.Zones:FindFirstChild("Zone" .. zoneIndex) :: Folder
+local function buildZoneRuntime(worldId: number, worldFolder: Folder, zoneIndex: number): ZoneRuntime
+	local zoneFolder = worldFolder.Zones:FindFirstChild("Zone" .. zoneIndex) :: Folder
 	local spawnAnchor = zoneFolder.ZoneSpawnPoints.SpawnPointAnchor :: BasePart
 
 	local attachments = {}
@@ -167,7 +178,7 @@ local function buildZoneRuntime(zoneIndex: number): ZoneRuntime
 		end
 	end
 
-	return { zoneIndex = zoneIndex, folder = zoneFolder, attachments = attachments }
+	return { worldId = worldId, zoneIndex = zoneIndex, folder = zoneFolder, attachments = attachments }
 end
 
 function CartSpawnService.Init()
@@ -175,11 +186,17 @@ function CartSpawnService.Init()
 	cartTemplate = ServerStorage.CartTemplates.PH_Cart_Common
 
 	local zonesPerWorld = EconomyConfig.Cart.ZonesPerWorld
-	for zoneIndex = 1, zonesPerWorld do
-		local zone = buildZoneRuntime(zoneIndex)
-		table.insert(zones, zone)
-		for _, attachment in zone.attachments do
-			spawnCartAt(zone, attachment)
+	for _, worldEntry in WorldData.Worlds do
+		local worldFolder = Workspace.Worlds:FindFirstChild(worldEntry.FolderName) :: Folder
+		local worldZones = {}
+		zonesByWorld[worldEntry.Id] = worldZones
+
+		for zoneIndex = 1, zonesPerWorld do
+			local zone = buildZoneRuntime(worldEntry.Id, worldFolder, zoneIndex)
+			table.insert(worldZones, zone)
+			for _, attachment in zone.attachments do
+				spawnCartAt(zone, attachment)
+			end
 		end
 	end
 

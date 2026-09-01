@@ -21,9 +21,11 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local PushPowerService = require(script.Parent.PushPowerService)
+local WorldService = require(script.Parent.WorldService)
 
 export type TrainItem = {
 	rarity: string,
@@ -156,8 +158,9 @@ local function awardXPAndLevelUp(state: PlayerState, xpEarned: number)
 	end
 end
 
--- Server-side "is the player inside the Corral trigger" check -- never
--- trusts a client-reported position (�5.6).
+-- Server-side "is the player inside the current World's Corral trigger"
+-- check -- never trusts a client-reported position (�5.6). Phase 5: keyed
+-- off WorldService's authoritative currentWorld, not hardcoded to World 1.
 local function isPlayerAtCorral(player: Player): boolean
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -165,8 +168,10 @@ local function isPlayerAtCorral(player: Player): boolean
 		return false
 	end
 
-	local world1 = Workspace:FindFirstChild("Worlds") and Workspace.Worlds:FindFirstChild("World1_ParkingLot")
-	local corral = world1 and world1:FindFirstChild("Corral") :: BasePart?
+	local worldId = WorldService.GetCurrentWorld(player)
+	local worldEntry = WorldData.GetWorld(worldId)
+	local worldFolder = worldEntry and Workspace:FindFirstChild("Worlds") and Workspace.Worlds:FindFirstChild(worldEntry.FolderName)
+	local corral = worldFolder and worldFolder:FindFirstChild("Corral") :: BasePart?
 	if not corral then
 		return false
 	end
@@ -181,15 +186,19 @@ end
 -- �4.2: SpeedFactor over the highest-Zone item actually being carried --
 -- a train made entirely of Zone 1 cargo returns at full speed regardless of
 -- the player's current frontier; a train including frontier-Zone cargo is
--- gated by that Zone's requirement.
+-- gated by that Zone's requirement. Trains only ever contain cargo from a
+-- single World in practice (claiming is gated to the player's current
+-- World, �3.5.4/Phase 5), but this compares (world, zone) pairs directly
+-- rather than assuming that to stay correct if that ever changes.
 local function getReturnSpeedFactor(player: Player, state: PlayerState): number
-	local maxZone = 1
+	local maxWorld, maxZone = 1, 1
 	for _, item in state.train do
-		if item.zone > maxZone then
+		if item.world > maxWorld or (item.world == maxWorld and item.zone > maxZone) then
+			maxWorld = item.world
 			maxZone = item.zone
 		end
 	end
-	return PushPowerService.GetSpeedFactorForZone(player, maxZone)
+	return PushPowerService.GetSpeedFactorForZone(player, maxWorld, maxZone)
 end
 
 local function handleRequestReturnCarts(player: Player)

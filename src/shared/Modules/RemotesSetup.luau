@@ -21,6 +21,12 @@ local REMOTES: { [string]: RemoteKind } = {
 	CartClaimed = "RemoteEvent",
 	PlayerDataUpdated = "RemoteEvent",
 	ZoneUnlocked = "RemoteEvent",
+
+	-- Phase 5 addition: �5.2's initial Remotes list didn't enumerate this one,
+	-- but Phase 5's own text calls for "the one-time World-unlock banner
+	-- (�8)" -- a VFX-trigger-only event, exactly mirroring ZoneUnlocked's
+	-- existing pattern, not a new kind of thing.
+	WorldUnlocked = "RemoteEvent",
 }
 
 local RemotesSetup = {}
