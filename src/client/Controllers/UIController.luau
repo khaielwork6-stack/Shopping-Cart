@@ -22,15 +22,18 @@ type PlayerDataCache = {
 	cash: number,
 	trainCount: number,
 	upgrades: { [string]: number },
+	unlockedZoneIndex: number,
 }
 
 local cache: PlayerDataCache = {
 	cash = 0,
 	trainCount = 0,
 	upgrades = { capacity = 0, agility = 0, mobility = 0, range = 0, pushPower = 0 },
+	unlockedZoneIndex = 1,
 }
 
 local cashLabel: TextLabel
+local pushPowerLabel: TextLabel
 local upgradeFrame: Frame
 local upgradeRows: { [string]: { LevelLabel: TextLabel, CostLabel: TextLabel, BuyButton: TextButton } } = {}
 
@@ -52,6 +55,20 @@ local function buildDebugHud(playerGui: PlayerGui): TextLabel
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.Text = "Cash: 0"
 	label.Parent = screenGui
+
+	local pushLabel = Instance.new("TextLabel")
+	pushLabel.Name = "PushPowerLabel"
+	pushLabel.Position = UDim2.new(0, 16, 0, 52)
+	pushLabel.Size = UDim2.new(0, 340, 0, 28)
+	pushLabel.BackgroundTransparency = 0.3
+	pushLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	pushLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	pushLabel.Font = Enum.Font.Gotham
+	pushLabel.TextSize = 16
+	pushLabel.TextXAlignment = Enum.TextXAlignment.Left
+	pushLabel.Text = "Push Power: 0"
+	pushLabel.Parent = screenGui
+	pushPowerLabel = pushLabel
 
 	return label
 end
@@ -162,8 +179,23 @@ local function renderUpgradeMenu()
 	end
 end
 
+local ZONES_PER_WORLD = EconomyConfig.Cart.ZonesPerWorld
+
 local function renderHud()
 	cashLabel.Text = string.format("Cash: %d   Train: %d", cache.cash, cache.trainCount)
+
+	local pushLevel = cache.upgrades.pushPower or 0
+	local effectivePower = EconomyMath.GetEffectivePushPower(pushLevel, 1, 1)
+	local nextZone = math.min(cache.unlockedZoneIndex + 1, ZONES_PER_WORLD)
+	local nextRequirement = EconomyMath.GetPowerRequirement(1, nextZone)
+	pushPowerLabel.Text = string.format(
+		"Push Power: Lv%d (%.1f / %.1f for Zone %d)   Unlocked: Zone %d",
+		pushLevel,
+		effectivePower,
+		nextRequirement,
+		nextZone,
+		cache.unlockedZoneIndex
+	)
 end
 
 function UIController.Init()
@@ -179,7 +211,12 @@ function UIController.Init()
 	-- PlayerDataUpdated pushes a diff (�5.2) -- merge whichever fields are
 	-- present rather than assuming a full replace.
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: { cash: number?, trainCount: number?, upgrades: { [string]: number }? })
+	playerDataUpdated.OnClientEvent:Connect(function(data: {
+		cash: number?,
+		trainCount: number?,
+		upgrades: { [string]: number }?,
+		unlockedZoneIndex: number?,
+	})
 		if data.cash ~= nil then
 			cache.cash = data.cash
 		end
@@ -188,6 +225,9 @@ function UIController.Init()
 		end
 		if data.upgrades ~= nil then
 			cache.upgrades = data.upgrades
+		end
+		if data.unlockedZoneIndex ~= nil then
+			cache.unlockedZoneIndex = data.unlockedZoneIndex
 		end
 		renderHud()
 		renderUpgradeMenu()

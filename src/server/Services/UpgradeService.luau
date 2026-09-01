@@ -3,8 +3,15 @@
 -- EconomyMath (�5.2/�3.7). Currency mutation itself stays owned by
 -- EconomyService (�5.2's stated responsibility split) -- this Service only
 -- owns levels and the immediate side effect a level has on the character
--- (Mobility's WalkSpeed). Push Power's effect is deferred to Phase 3, since
--- it has nothing to resist yet (per �14 Phase 2's own note).
+-- (Mobility's WalkSpeed).
+--
+-- EconomyService is required lazily (on first use, not at module top level)
+-- because Phase 3 introduced a genuine mutual dependency: EconomyService's
+-- return-trip resistance needs PushPowerService, which needs this Service's
+-- levels, which needs EconomyService's currency -- a real 3-way cycle. A
+-- top-level require on any one edge deadlocks Luau's require() at boot;
+-- deferring this one edge breaks the cycle since, by the time a purchase
+-- actually happens, every Service has already finished loading.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,7 +19,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
-local EconomyService = require(script.Parent.EconomyService)
+
+local economyServiceCache: { TrySpendCash: (Player, number) -> boolean, GetCash: (Player) -> number }? = nil
+local function getEconomyService()
+	if not economyServiceCache then
+		economyServiceCache = require(script.Parent.EconomyService) :: any
+	end
+	return economyServiceCache :: any
+end
 
 type UpgradeStatName = EconomyConfig.UpgradeStatName
 
@@ -70,11 +84,12 @@ local function handleRequestPurchaseUpgrade(player: Player, statName: string, qu
 
 	local requestedQuantity = math.clamp(math.floor(quantity or 1), 1, MAX_PURCHASE_QUANTITY)
 	local levels = getLevels(player)
+	local economyService = getEconomyService()
 
 	local purchased = 0
 	for _ = 1, requestedQuantity do
 		local cost = EconomyMath.GetUpgradeCost(stat, levels[stat])
-		if not EconomyService.TrySpendCash(player, cost) then
+		if not economyService.TrySpendCash(player, cost) then
 			break
 		end
 		levels[stat] += 1

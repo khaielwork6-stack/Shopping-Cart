@@ -124,6 +124,9 @@ local function playRarityWisp(rarity: string)
 	Debris:AddItem(attachment, 1)
 end
 
+-- Phase 3: the server call itself now blocks for the real resistance-gated
+-- dwell duration (�4.2), so debounce just needs to cover the in-flight
+-- InvokeServer call -- no fixed extra wait needed.
 local function tryReturnCarts(remotesFolder: Folder)
 	if returnDebounce then
 		return
@@ -133,7 +136,6 @@ local function tryReturnCarts(remotesFolder: Folder)
 	local requestReturnCarts = remotesFolder:FindFirstChild("RequestReturnCarts") :: RemoteFunction
 	requestReturnCarts:InvokeServer()
 
-	task.wait(0.5)
 	returnDebounce = false
 end
 

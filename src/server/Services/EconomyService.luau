@@ -1,14 +1,22 @@
 --!strict
--- Cart value/return resolution, currency mutation (�5.2/�4.1/�3.4).
--- Phase 1: flat Common-only value at World1/Zone1, in-memory only (no
--- persistence -- that is Phase 8). Rarity variance is Phase 2.
+-- Cart value/return resolution, currency mutation (�5.2/�4.1/�3.4). In-
+-- memory only (no persistence -- that is Phase 8).
+--
+-- Phase 3: the Corral return now takes real time, gated by Push Power's
+-- SpeedFactor over the highest-Zone item in the train (�4.2's "return-trip-
+-- to-corral time") -- see EconomyConfig.Resistance for why this is the
+-- chosen concrete mechanic. The RemoteFunction handler blocks for the
+-- dwell duration and re-validates every tick, mirroring the existing
+-- CollectTime dwell pattern from Phase 1/2 rather than inventing a new one.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local PushPowerService = require(script.Parent.PushPowerService)
 
 export type TrainItem = {
 	rarity: string,
@@ -24,8 +32,10 @@ export type PlayerState = {
 local EconomyService = {}
 
 local REBIRTH_CASH_MULT = 1 -- Rebirth doesn't exist yet (Phase 4); base multiplier only
+local DWELL_STEP_SECONDS = 0.1
 
 local playerStates: { [Player]: PlayerState } = {}
+local isReturning: { [Player]: boolean } = {}
 local remotesFolder: Folder
 
 local function getState(player: Player): PlayerState
@@ -95,7 +105,25 @@ local function isPlayerAtCorral(player: Player): boolean
 		and math.abs(relative.Z) <= halfSize.Z
 end
 
+-- �4.2: SpeedFactor over the highest-Zone item actually being carried --
+-- a train made entirely of Zone 1 cargo returns at full speed regardless of
+-- the player's current frontier; a train including frontier-Zone cargo is
+-- gated by that Zone's requirement.
+local function getReturnSpeedFactor(player: Player, state: PlayerState): number
+	local maxZone = 1
+	for _, item in state.train do
+		if item.zone > maxZone then
+			maxZone = item.zone
+		end
+	end
+	return PushPowerService.GetSpeedFactorForZone(player, maxZone)
+end
+
 local function handleRequestReturnCarts(player: Player)
+	if isReturning[player] then
+		return { success = false, reason = "AlreadyReturning" }
+	end
+
 	local state = getState(player)
 
 	if #state.train == 0 then
@@ -106,6 +134,30 @@ local function handleRequestReturnCarts(player: Player)
 		return { success = false, reason = "NotAtCorral" }
 	end
 
+	isReturning[player] = true
+
+	local speedFactor = getReturnSpeedFactor(player, state)
+	local duration = EconomyConfig.Resistance.BaseReturnDuration / speedFactor
+
+	local elapsed = 0
+	while elapsed < duration do
+		task.wait(DWELL_STEP_SECONDS)
+		elapsed += DWELL_STEP_SECONDS
+
+		if not player.Parent then
+			isReturning[player] = nil
+			return { success = false, reason = "PlayerLeft" }
+		end
+		if not isPlayerAtCorral(player) then
+			isReturning[player] = nil
+			return { success = false, reason = "LeftCorralEarly" }
+		end
+		if #state.train == 0 then
+			isReturning[player] = nil
+			return { success = false, reason = "TrainEmpty" }
+		end
+	end
+
 	local total = 0
 	for _, item in state.train do
 		total += EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, REBIRTH_CASH_MULT)
@@ -113,6 +165,7 @@ local function handleRequestReturnCarts(player: Player)
 
 	state.cash += total
 	table.clear(state.train)
+	isReturning[player] = nil
 	pushPlayerData(player)
 
 	return { success = true, cashEarned = total, newCash = state.cash }
@@ -133,6 +186,7 @@ function EconomyService.Init()
 
 	Players.PlayerRemoving:Connect(function(player: Player)
 		playerStates[player] = nil
+		isReturning[player] = nil
 	end)
 
 	print("[EconomyService] Init")

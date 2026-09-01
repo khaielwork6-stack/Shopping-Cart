@@ -117,6 +117,26 @@ EconomyConfig.Collection = {
 	BaseClaimRadius = 6,
 }
 
+-- �4.2 Push Power resistance. The Guide describes SpeedFactor as dividing
+-- into "a cart's approach/travel time and the return-trip-to-corral time,"
+-- while also stating -- unambiguously -- that the player's own WalkSpeed is
+-- never touched by resistance ("communicated via animation playback-speed
+-- scaling... not character root movement"). Those two statements only both
+-- hold if "travel time" is an abstracted quantity, not literal WalkSpeed.
+-- This project's concrete implementation: resistance becomes a genuine
+-- required-dwell-time at the Corral before a return completes (mirroring
+-- the existing CollectTime dwell-timer pattern from �4.1.2), scaled by
+-- SpeedFactor exactly as �4.2 specifies for "return-trip-to-corral time."
+-- "Cart approach/travel time" is satisfied by the real-time cost of
+-- physical walking (already governed by Mobility/Range, per �3.7.4's own
+-- "effective inter-cart travel time" language, which is itself an
+-- abstraction over literal movement) -- WalkSpeed itself is never modified
+-- by Push Power, matching the Guide's explicit constraint. BaseReturnDuration
+-- is not pinned to a number anywhere in �3 -- this project's choice.
+EconomyConfig.Resistance = {
+	BaseReturnDuration = 1.5, -- seconds, before SpeedFactor is applied
+}
+
 -- �6.3 Save system timing
 EconomyConfig.Save = {
 	AutosaveIntervalSeconds = 180,
