@@ -34,6 +34,7 @@ type PlayerDataCache = {
 	rebirthCashMultiplier: number,
 	currentWorld: number,
 	unlockedWorlds: { [number]: boolean },
+	indexPushPowerBonus: number,
 }
 
 local cache: PlayerDataCache = {
@@ -48,6 +49,7 @@ local cache: PlayerDataCache = {
 	rebirthCount = 0,
 	rebirthPushPowerMultiplier = 1,
 	rebirthCashMultiplier = 1,
+	indexPushPowerBonus = 1,
 	currentWorld = 1,
 	unlockedWorlds = { [1] = true },
 }
@@ -387,7 +389,8 @@ local function renderHud()
 	)
 
 	local pushLevel = cache.upgrades.pushPower or 0
-	local effectivePower = EconomyMath.GetEffectivePushPower(pushLevel, cache.rebirthPushPowerMultiplier, 1)
+	local effectivePower =
+		EconomyMath.GetEffectivePushPower(pushLevel, cache.rebirthPushPowerMultiplier, cache.indexPushPowerBonus)
 	local nextZone = math.min(cache.unlockedZoneIndex + 1, ZONES_PER_WORLD)
 	local nextRequirement = EconomyMath.GetPowerRequirement(cache.currentWorld, nextZone)
 	pushPowerLabel.Text = string.format(
@@ -560,6 +563,7 @@ function UIController.Init()
 		rebirthCashMultiplier: number?,
 		currentWorld: number?,
 		unlockedWorlds: { number }?,
+		indexPushPowerBonus: number?,
 	})
 		-- �4.4: "the banner re-appears each time the player returns a cart
 		-- while still eligible" -- a return is the only path that raises
@@ -611,6 +615,9 @@ function UIController.Init()
 				set[worldId] = true
 			end
 			cache.unlockedWorlds = set
+		end
+		if data.indexPushPowerBonus ~= nil then
+			cache.indexPushPowerBonus = data.indexPushPowerBonus
 		end
 
 		renderHud()

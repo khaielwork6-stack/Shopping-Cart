@@ -33,6 +33,8 @@ local LIGHT_THRESHOLD = 0.85
 local player = Players.LocalPlayer
 local cachedPushPowerLevel = 0
 local cachedCurrentWorld = 1
+local cachedRebirthPushPowerMultiplier = 1
+local cachedIndexPushPowerBonus = 1
 local dragEmitter: ParticleEmitter?
 local zoneUnlockSound: Sound?
 
@@ -87,7 +89,11 @@ local function onHeartbeat()
 	-- so this needs no World-specific adjustment -- only which World's
 	-- PowerRequirement table applies does.
 	local zoneIndex = ZoneData.GetZoneIndexFromWorldZ(root.Position.Z, ZONES_PER_WORLD)
-	local effectivePushPower = EconomyMath.GetEffectivePushPower(cachedPushPowerLevel, 1, 1)
+	local effectivePushPower = EconomyMath.GetEffectivePushPower(
+		cachedPushPowerLevel,
+		cachedRebirthPushPowerMultiplier,
+		cachedIndexPushPowerBonus
+	)
 	local requirement = EconomyMath.GetPowerRequirement(cachedCurrentWorld, zoneIndex)
 	local speedFactor = EconomyMath.GetSpeedFactor(effectivePushPower, requirement)
 
@@ -135,12 +141,23 @@ function ResistanceVFXController.Init()
 	zoneUnlockSound = sound
 
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: { upgrades: { [string]: number }?, currentWorld: number? })
+	playerDataUpdated.OnClientEvent:Connect(function(data: {
+		upgrades: { [string]: number }?,
+		currentWorld: number?,
+		rebirthPushPowerMultiplier: number?,
+		indexPushPowerBonus: number?,
+	})
 		if data.upgrades and data.upgrades.pushPower ~= nil then
 			cachedPushPowerLevel = data.upgrades.pushPower
 		end
 		if data.currentWorld ~= nil then
 			cachedCurrentWorld = data.currentWorld
+		end
+		if data.rebirthPushPowerMultiplier ~= nil then
+			cachedRebirthPushPowerMultiplier = data.rebirthPushPowerMultiplier
+		end
+		if data.indexPushPowerBonus ~= nil then
+			cachedIndexPushPowerBonus = data.indexPushPowerBonus
 		end
 	end)
 

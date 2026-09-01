@@ -5,7 +5,8 @@
 -- World has its own independent 8-Zone progression) and exposes Effective
 -- Push Power / SpeedFactor for other Services to consume.
 --
--- Index bonus (Phase 7) doesn't exist yet, held at its neutral value (1).
+-- Phase 7: the Index passive bonus is now real (IndexService is a leaf --
+-- nothing requires it back, so a top-level require here is safe).
 -- EconomyService (Rebirth multiplier) is required lazily -- it already
 -- requires this Service at module top level (for return-trip SpeedFactor),
 -- so a top-level require back would deadlock Luau's loader.
@@ -18,6 +19,7 @@ local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local UpgradeService = require(script.Parent.UpgradeService)
 local WorldService = require(script.Parent.WorldService)
+local IndexService = require(script.Parent.IndexService)
 
 local PushPowerService = {}
 
@@ -55,7 +57,8 @@ function PushPowerService.GetEffectivePushPower(player: Player): number
 	local level = UpgradeService.GetLevel(player, "pushPower")
 	local rebirthCount = getEconomyService().GetLevelState(player).rebirthCount
 	local rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(rebirthCount)
-	return EconomyMath.GetEffectivePushPower(level, rebirthPushPowerMultiplier, 1) -- no Index bonus yet
+	local indexBonus = IndexService.GetPushPowerBonus(player)
+	return EconomyMath.GetEffectivePushPower(level, rebirthPushPowerMultiplier, indexBonus)
 end
 
 function PushPowerService.GetSpeedFactorForZone(player: Player, worldId: number, zoneIndex: number): number

@@ -176,6 +176,14 @@ function EconomyMath.GetIndexPushPowerBonus(uniqueItemsDiscovered: number): numb
 	return 1 + EconomyConfig.Index.PushPowerBonusPerTenDiscovered * math.floor(uniqueItemsDiscovered / 10)
 end
 
+-- �7.3/�3.8: this project's chosen Luck source (see EconomyConfig.Index's
+-- comment) -- a slow passive gain from Index completion, the same shape as
+-- the Push Power bonus above. Future gamepass/event Luck sources (�12.2)
+-- multiply on top of this base value, per the GDD's stacking rule.
+function EconomyMath.GetLuckFromDiscoveries(uniqueItemsDiscovered: number): number
+	return 1 + EconomyConfig.Index.LuckBonusPerTenDiscovered * math.floor(uniqueItemsDiscovered / 10)
+end
+
 -- �4.1.1 Per-Zone active cart spawn cap
 function EconomyMath.GetMaxActiveCarts(zoneIndexWithinWorld: number): number
 	return EconomyConfig.Spawn.MaxActiveCartsBase + EconomyConfig.Spawn.MaxActiveCartsPerZoneIndex * zoneIndexWithinWorld

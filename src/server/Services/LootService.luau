@@ -1,18 +1,18 @@
 --!strict
 -- Loot rolls, the Bag, sealed containers (�5.2/�4.5). Fully independent of
 -- the Cash rarity roll (Phase 2) -- same reallocation formula, separate
--- roll, separate outcome. First-discovery/Index tracking is explicitly
--- Phase 7's job (per �14's own Implementation Order for that phase), not
--- built here.
+-- roll, separate outcome.
 --
--- Luck is fixed at x1 until Phase 7 wires a real per-player value through
--- here, matching every other Luck-consuming system so far (cart rarity,
--- Phase 2).
+-- Phase 7: Luck now comes from IndexService (this project's chosen source,
+-- see EconomyConfig.Index's comment) instead of a fixed x1, and a genuine
+-- Loot find records a first-discovery with IndexService (�4.6).
 --
 -- EconomyService is required lazily: EconomyService needs this Service (to
 -- roll Loot at the moment of a cart return) and this Service needs
 -- EconomyService (Sell All grants Cash) -- the same mutual-dependency shape
 -- as every other cross-Service edge since Phase 3, resolved the same way.
+-- IndexService is a leaf (nothing requires it back), so it's a safe
+-- top-level require.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -24,6 +24,7 @@ local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local WorldService = require(script.Parent.WorldService)
+local IndexService = require(script.Parent.IndexService)
 
 export type BagEntry = {
 	itemId: string,
@@ -32,8 +33,6 @@ export type BagEntry = {
 }
 
 local LootService = {}
-
-local LUCK = 1 -- fixed until Phase 7
 
 local playerBags: { [Player]: { BagEntry } } = {}
 local remotesFolder: Folder
@@ -83,19 +82,21 @@ local function addToBag(player: Player, itemId: string, sealed: boolean, count: 
 	return true
 end
 
-local function rollDropOnly(): boolean
-	local dropChance = EconomyMath.GetLootDropChance(LUCK)
+local function rollDropOnly(luck: number): boolean
+	local dropChance = EconomyMath.GetLootDropChance(luck)
 	return math.random() < dropChance
 end
 
 -- �4.5: per-cart Loot roll, independent of the Cash rarity roll. Called by
 -- EconomyService once per returned cart, at the moment of return.
 function LootService.RollForCart(player: Player)
-	if not rollDropOnly() then
+	local luck = IndexService.GetLuck(player)
+
+	if not rollDropOnly(luck) then
 		return
 	end
 
-	local rarityWeights = EconomyMath.LuckReallocate(LUCK)
+	local rarityWeights = EconomyMath.LuckReallocate(luck)
 	local rarity = EconomyMath.RollRarity(rarityWeights)
 	local candidates = LootData.GetItemsByRarity(rarity)
 	if #candidates == 0 then
@@ -107,6 +108,7 @@ function LootService.RollForCart(player: Player)
 	local sealed = math.random() < sealedChance
 
 	addToBag(player, item.Id, sealed, 1)
+	IndexService.RecordDiscovery(player, item.Id) -- �4.6: first-time-only; duplicates are no-ops
 end
 
 -- Server-side "is the player at a Sell Loot NPC" check -- never trusts a
@@ -212,10 +214,10 @@ function LootService.Init()
 	local debugRollStats = Instance.new("BindableFunction")
 	debugRollStats.Name = "DebugRollStats"
 	debugRollStats.Parent = script
-	debugRollStats.OnInvoke = function(iterations: number)
+	debugRollStats.OnInvoke = function(iterations: number, luck: number?)
 		local hits = 0
 		for _ = 1, iterations do
-			if rollDropOnly() then
+			if rollDropOnly(luck or 1) then
 				hits += 1
 			end
 		end

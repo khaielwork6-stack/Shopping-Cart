@@ -23,6 +23,7 @@ local EconomyService = require(script.Parent.EconomyService)
 local UpgradeService = require(script.Parent.UpgradeService)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
+local IndexService = require(script.Parent.IndexService)
 
 local CartSpawnService = {}
 
@@ -50,15 +51,40 @@ local function cartKey(worldId: number, zoneIndex: number, attachmentName: strin
 	return worldId .. "_" .. zoneIndex .. "_" .. attachmentName
 end
 
--- �4.1.1: rarity is rolled at spawn time, not collection time. Luck is
--- fixed at x1 until Phase 7 wires a real per-player Luck value through here.
-local function rollRarity(): string
-	local weights = EconomyMath.LuckReallocate(1)
+-- �4.1.1: "rolled at spawn time... using the current server-side Luck value
+-- for whichever player is nearest that spawn point." Falls back to neutral
+-- Luck (x1) if no player is currently in that Zone's World (e.g. the
+-- initial spawn at boot, before anyone has joined).
+local function findNearestPlayerInWorld(worldId: number, position: Vector3): Player?
+	local nearest: Player? = nil
+	local nearestDistance = math.huge
+
+	for _, player in Players:GetPlayers() do
+		if WorldService.GetCurrentWorld(player) == worldId then
+			local character = player.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if root then
+				local distance = (root.Position - position).Magnitude
+				if distance < nearestDistance then
+					nearestDistance = distance
+					nearest = player
+				end
+			end
+		end
+	end
+
+	return nearest
+end
+
+local function rollRarity(worldId: number, position: Vector3): string
+	local nearestPlayer = findNearestPlayerInWorld(worldId, position)
+	local luck = nearestPlayer and IndexService.GetLuck(nearestPlayer) or 1
+	local weights = EconomyMath.LuckReallocate(luck)
 	return EconomyMath.RollRarity(weights)
 end
 
 local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
-	local rarity = rollRarity()
+	local rarity = rollRarity(zone.worldId, attachment.WorldPosition)
 	local cart = cartTemplate:Clone()
 	cart:PivotTo(CFrame.new(attachment.WorldPosition))
 

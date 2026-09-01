@@ -98,6 +98,15 @@ EconomyConfig.Index = {
 	TotalItems = 110,
 	RaritySplit = { Common = 40, Uncommon = 30, Rare = 25, Epic = 10, Legendary = 5 },
 	PushPowerBonusPerTenDiscovered = 0.025, -- 1 + 0.025 * floor(discovered/10)
+
+	-- �3.8/�7.3's Luck source is left as "a recommendation" by the Guide
+	-- ("a slow passive gain from Index completion milestones... this
+	-- project's choice, not a pinned formula"). Mirrors the Push Power
+	-- bonus's own shape (+X per 10 discovered) for consistency. At the
+	-- current 25-item first-pass registry this caps Luck at x1.2; once
+	-- population reaches all 110 items (incremental, per Phase 6's note)
+	-- it reaches x2.1, matching �3.8's table's meaningfully-impactful range.
+	LuckBonusPerTenDiscovered = 0.1, -- Luck = 1 + 0.1 * floor(discovered/10)
 }
 
 -- �4.1.1 Cart spawn / respawn

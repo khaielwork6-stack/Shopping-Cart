@@ -16,6 +16,7 @@ local BOOT_ORDER = {
 	{ Name = "TrainController", Module = script.Controllers.TrainController },
 	{ Name = "ResistanceVFXController", Module = script.Controllers.ResistanceVFXController },
 	{ Name = "LootController", Module = script.Controllers.LootController },
+	{ Name = "IndexController", Module = script.Controllers.IndexController },
 }
 
 print("[Client Main] Booting controllers...")
