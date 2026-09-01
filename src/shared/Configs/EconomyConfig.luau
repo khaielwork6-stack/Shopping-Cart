@@ -103,6 +103,15 @@ EconomyConfig.Spawn = {
 	RespawnDelayMax = 6,
 }
 
+-- �4.1.2 Collection. The Guide references Range's "BaseRadius" and Agility's
+-- collect timer but never pins a concrete base radius anywhere in �3 -- this
+-- is the one number this project must choose for itself. 6 studs is picked
+-- as a comfortable walk-into-it radius at Range level 0 (Phase 1 uses this
+-- directly; Range's �3.7.4 multiplier applies starting Phase 2).
+EconomyConfig.Collection = {
+	BaseClaimRadius = 6,
+}
+
 -- �6.3 Save system timing
 EconomyConfig.Save = {
 	AutosaveIntervalSeconds = 180,

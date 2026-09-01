@@ -1,10 +1,129 @@
 --!strict
--- Client-side visual train rendering (�4.1.6/�5.2). Stub for Phase 0 -- full
--- implementation is Phase 1.
+-- Client-side visual train rendering (�4.1.3/�4.1.6/�11.1). Purely visual --
+-- no physics, no per-cart networked Instance; each carried cart's position
+-- is a lerped point along a CFrame-history trail behind the player,
+-- reconstructed from the single trainCount value PlayerDataUpdated pushes.
+--
+-- Also owns the Corral-touch -> RequestReturnCarts trigger for Phase 1,
+-- since no dedicated Corral controller exists yet in the Guide's Controller
+-- list and this is the closest owning system (full UI/VFX corral feedback
+-- lands in Phase 9/10).
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 
 local TrainController = {}
 
+local SPACING = 3 -- studs between train carts (�4.1.3)
+local TRAIL_SAMPLE_DISTANCE = 0.5
+local LERP_ALPHA = 0.35
+local MAX_TRAIL_POINTS = 400
+
+local player = Players.LocalPlayer
+
+local trailPoints: { CFrame } = {}
+local visualCarts: { Model } = {}
+local cartTemplate: Model
+local returnDebounce = false
+
+local function updateTrail(rootCFrame: CFrame)
+	local last = trailPoints[#trailPoints]
+	if not last or (last.Position - rootCFrame.Position).Magnitude >= TRAIL_SAMPLE_DISTANCE then
+		table.insert(trailPoints, rootCFrame)
+		while #trailPoints > MAX_TRAIL_POINTS do
+			table.remove(trailPoints, 1)
+		end
+	end
+end
+
+local function getTrailCFrameAtDistance(distance: number): CFrame?
+	if #trailPoints == 0 then
+		return nil
+	end
+
+	local traveled = 0
+	for i = #trailPoints, 2, -1 do
+		local a = trailPoints[i]
+		local b = trailPoints[i - 1]
+		local segment = (a.Position - b.Position).Magnitude
+		if traveled + segment >= distance then
+			local alpha = segment > 0 and (distance - traveled) / segment or 0
+			return a:Lerp(b, alpha)
+		end
+		traveled += segment
+	end
+
+	return trailPoints[1]
+end
+
+local function setTrainCount(count: number)
+	while #visualCarts < count do
+		local clone = cartTemplate:Clone()
+		clone.Parent = Workspace
+		table.insert(visualCarts, clone)
+	end
+	while #visualCarts > count do
+		local cart = table.remove(visualCarts)
+		if cart then
+			cart:Destroy()
+		end
+	end
+end
+
+local function onHeartbeat()
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+
+	updateTrail(root.CFrame)
+
+	for i, cartModel in visualCarts do
+		local target = getTrailCFrameAtDistance(i * SPACING)
+		if target then
+			cartModel:PivotTo(cartModel:GetPivot():Lerp(target, LERP_ALPHA))
+		end
+	end
+end
+
+local function tryReturnCarts(remotesFolder: Folder)
+	if returnDebounce then
+		return
+	end
+	returnDebounce = true
+
+	local requestReturnCarts = remotesFolder:FindFirstChild("RequestReturnCarts") :: RemoteFunction
+	requestReturnCarts:InvokeServer()
+
+	task.wait(0.5)
+	returnDebounce = false
+end
+
 function TrainController.Init()
+	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
+	cartTemplate = ReplicatedStorage.Assets.Placeholders.PH_Cart_Common
+
+	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
+	playerDataUpdated.OnClientEvent:Connect(function(data: { trainCount: number, cash: number })
+		setTrainCount(data.trainCount)
+	end)
+
+	RunService.Heartbeat:Connect(onHeartbeat)
+
+	local world1 = Workspace:WaitForChild("Worlds"):WaitForChild("World1_ParkingLot")
+	local corral = world1:WaitForChild("Corral") :: BasePart
+	corral.Touched:Connect(function(hit: BasePart)
+		local character = player.Character
+		if character and hit:IsDescendantOf(character) then
+			tryReturnCarts(remotesFolder)
+		end
+	end)
+
 	print("[TrainController] Init")
 end
 
