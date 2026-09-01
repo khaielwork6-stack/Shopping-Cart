@@ -76,6 +76,16 @@ local function pushUpgradeData(player: Player)
 	playerDataUpdated:FireClient(player, { upgrades = table.clone(getLevels(player)) })
 end
 
+-- Public API consumed by RebirthService (�4.4: "Push Power level -- back to
+-- base"). Capacity/Agility/Mobility/Range are explicitly never touched here
+-- -- �4.4's persistent list -- Rebirth must never call this for anything but
+-- pushPower.
+function UpgradeService.ResetPushPower(player: Player)
+	local levels = getLevels(player)
+	levels.pushPower = 0
+	pushUpgradeData(player)
+end
+
 local function handleRequestPurchaseUpgrade(player: Player, statName: string, quantity: number?)
 	if not table.find(STAT_NAMES, statName) then
 		return { success = false, reason = "InvalidStat" }

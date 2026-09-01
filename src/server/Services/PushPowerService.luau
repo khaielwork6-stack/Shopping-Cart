@@ -3,10 +3,12 @@
 -- player's unlocked-Zone frontier (�3.5.4's 95% soft gate) and exposes
 -- Effective Push Power / SpeedFactor for other Services to consume.
 --
--- No Rebirth Push Power Multiplier (Phase 4) or Index bonus (Phase 7) exist
--- yet, so both are held at their neutral value (1) here -- EconomyMath's
--- formula is already shaped to take them, so nothing here changes once
--- those Phases land.
+-- Index bonus (Phase 7) doesn't exist yet, held at its neutral value (1).
+-- Rebirth Push Power Multiplier (Phase 4) is read from EconomyService,
+-- lazily -- EconomyService already requires this Service at module top
+-- level (for return-trip SpeedFactor), so a top-level require back would
+-- deadlock Luau's loader; deferring to first-use breaks the cycle exactly
+-- like UpgradeService's lazy EconomyService reference does.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -24,6 +26,14 @@ local ZONES_PER_WORLD = EconomyConfig.Cart.ZonesPerWorld
 local unlockedZoneIndex: { [Player]: number } = {}
 local remotesFolder: Folder
 
+local economyServiceCache: { GetLevelState: (Player) -> { rebirthCount: number } }? = nil
+local function getEconomyService()
+	if not economyServiceCache then
+		economyServiceCache = require(script.Parent.EconomyService) :: any
+	end
+	return economyServiceCache :: any
+end
+
 local function getUnlocked(player: Player): number
 	return unlockedZoneIndex[player] or 1
 end
@@ -34,7 +44,9 @@ end
 
 function PushPowerService.GetEffectivePushPower(player: Player): number
 	local level = UpgradeService.GetLevel(player, "pushPower")
-	return EconomyMath.GetEffectivePushPower(level, 1, 1) -- no Rebirth/Index bonus yet
+	local rebirthCount = getEconomyService().GetLevelState(player).rebirthCount
+	local rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(rebirthCount)
+	return EconomyMath.GetEffectivePushPower(level, rebirthPushPowerMultiplier, 1) -- no Index bonus yet
 end
 
 function PushPowerService.GetSpeedFactorForZone(player: Player, zoneIndex: number): number

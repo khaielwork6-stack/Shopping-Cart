@@ -1,13 +1,20 @@
 --!strict
--- Cart value/return resolution, currency mutation (�5.2/�4.1/�3.4). In-
--- memory only (no persistence -- that is Phase 8).
+-- Cart value/return resolution, currency mutation (�5.2/�4.1/�3.4), and
+-- Level/XP/Total Level tracking (�3.2/�3.3). In-memory only (no persistence
+-- -- that is Phase 8). Level/XP is kept here rather than a separate
+-- LevelingService (Phase 4's own text allows either) because it is earned
+-- in the exact same transaction as Cash (�3.2: XP = CashValue/5 per cart),
+-- and Rebirth's reset touches both together -- splitting them would just
+-- add a cross-service call for no separation-of-concerns benefit.
 --
--- Phase 3: the Corral return now takes real time, gated by Push Power's
+-- Phase 3: the Corral return takes real time, gated by Push Power's
 -- SpeedFactor over the highest-Zone item in the train (�4.2's "return-trip-
 -- to-corral time") -- see EconomyConfig.Resistance for why this is the
--- chosen concrete mechanic. The RemoteFunction handler blocks for the
--- dwell duration and re-validates every tick, mirroring the existing
--- CollectTime dwell pattern from Phase 1/2 rather than inventing a new one.
+-- chosen concrete mechanic.
+--
+-- Phase 4: Rebirth's Cash Multiplier is derived from rebirthCount at the
+-- moment of each return (never stored redundantly, per �6.1's warning
+-- against desyncable derived fields) via EconomyMath.GetRebirthCashMultiplier.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -27,11 +34,21 @@ export type TrainItem = {
 export type PlayerState = {
 	cash: number,
 	train: { TrainItem },
+	currentLevel: number,
+	currentXP: number,
+	totalLevel: number,
+	rebirthCount: number,
+}
+
+export type LevelState = {
+	currentLevel: number,
+	currentXP: number,
+	totalLevel: number,
+	rebirthCount: number,
 }
 
 local EconomyService = {}
 
-local REBIRTH_CASH_MULT = 1 -- Rebirth doesn't exist yet (Phase 4); base multiplier only
 local DWELL_STEP_SECONDS = 0.1
 
 local playerStates: { [Player]: PlayerState } = {}
@@ -41,7 +58,14 @@ local remotesFolder: Folder
 local function getState(player: Player): PlayerState
 	local state = playerStates[player]
 	if not state then
-		state = { cash = 0, train = {} }
+		state = {
+			cash = 0,
+			train = {},
+			currentLevel = 1,
+			currentXP = 0,
+			totalLevel = 0,
+			rebirthCount = 0,
+		}
 		playerStates[player] = state
 	end
 	return state
@@ -53,6 +77,13 @@ local function pushPlayerData(player: Player)
 	playerDataUpdated:FireClient(player, {
 		cash = state.cash,
 		trainCount = #state.train,
+		currentLevel = state.currentLevel,
+		currentXP = state.currentXP,
+		xpForNextLevel = EconomyMath.GetXPRequired(state.currentLevel),
+		totalLevel = state.totalLevel,
+		rebirthCount = state.rebirthCount,
+		rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(state.rebirthCount),
+		rebirthCashMultiplier = EconomyMath.GetRebirthCashMultiplier(state.rebirthCount),
 	})
 end
 
@@ -81,6 +112,48 @@ function EconomyService.TrySpendCash(player: Player, amount: number): boolean
 	state.cash -= amount
 	pushPlayerData(player)
 	return true
+end
+
+-- Public API consumed by PushPowerService (Rebirth Push Power Multiplier)
+-- and RebirthService (eligibility check + reset).
+function EconomyService.GetLevelState(player: Player): LevelState
+	local state = getState(player)
+	return {
+		currentLevel = state.currentLevel,
+		currentXP = state.currentXP,
+		totalLevel = state.totalLevel,
+		rebirthCount = state.rebirthCount,
+	}
+end
+
+-- �4.4: resets Current Level/XP to base and increments rebirthCount. Total
+-- Level, Cash, and every upgrade level except Push Power are untouched --
+-- Push Power's own reset is UpgradeService's responsibility, called
+-- separately within the same RequestRebirth handler (�4.4's "atomic"
+-- requirement is about no exploitable window between the two, not that
+-- they must be a single function call).
+function EconomyService.PerformRebirthReset(player: Player): number
+	local state = getState(player)
+	state.currentLevel = 1
+	state.currentXP = 0
+	state.rebirthCount += 1
+	pushPlayerData(player)
+	return state.rebirthCount
+end
+
+-- �3.2: awards XP (CashValue/5, min 1, per cart) and cascades level-ups;
+-- Total Level increments once per level gained and never decreases.
+local function awardXPAndLevelUp(state: PlayerState, xpEarned: number)
+	state.currentXP += xpEarned
+	while true do
+		local required = EconomyMath.GetXPRequired(state.currentLevel)
+		if state.currentXP < required then
+			break
+		end
+		state.currentXP -= required
+		state.currentLevel += 1
+		state.totalLevel += 1
+	end
 end
 
 -- Server-side "is the player inside the Corral trigger" check -- never
@@ -158,17 +231,22 @@ local function handleRequestReturnCarts(player: Player)
 		end
 	end
 
+	local rebirthCashMult = EconomyMath.GetRebirthCashMultiplier(state.rebirthCount)
 	local total = 0
+	local xpEarned = 0
 	for _, item in state.train do
-		total += EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, REBIRTH_CASH_MULT)
+		local cashValue = EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, rebirthCashMult)
+		total += cashValue
+		xpEarned += EconomyMath.GetXPFromCashValue(cashValue)
 	end
 
 	state.cash += total
 	table.clear(state.train)
+	awardXPAndLevelUp(state, xpEarned)
 	isReturning[player] = nil
 	pushPlayerData(player)
 
-	return { success = true, cashEarned = total, newCash = state.cash }
+	return { success = true, cashEarned = total, newCash = state.cash, xpEarned = xpEarned }
 end
 
 function EconomyService.Init()
@@ -188,6 +266,21 @@ function EconomyService.Init()
 		playerStates[player] = nil
 		isReturning[player] = nil
 	end)
+
+	-- Command-Bar-only test hook (Phase 4's own Test Procedure explicitly
+	-- sanctions "Command-Bar-grant XP for test speed" -- reaching Level 25
+	-- through real play takes ~25 min per the Guide's own simulation, �3.9).
+	-- A BindableFunction, not a RemoteFunction -- Bindables never cross the
+	-- client/server boundary, so this is not reachable by any client under
+	-- any circumstance, unlike a RemoteFunction would be.
+	local debugGrantXP = Instance.new("BindableFunction")
+	debugGrantXP.Name = "DebugGrantXP"
+	debugGrantXP.Parent = script
+	debugGrantXP.OnInvoke = function(player: Player, amount: number)
+		local state = getState(player)
+		awardXPAndLevelUp(state, amount)
+		pushPlayerData(player)
+	end
 
 	print("[EconomyService] Init")
 end
