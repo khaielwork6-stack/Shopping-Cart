@@ -1,28 +1,27 @@
 --!strict
 -- First-discovery detection + passive Push Power bonus (�5.2/�4.6), and
 -- this project's Luck source (�3.8/�7.3 -- see EconomyConfig.Index's
--- comment for why Index-completion was chosen). A leaf Service: nothing
--- else requires this one back, so every reference to it elsewhere is a
--- safe top-level require, no laziness needed.
+-- comment for why Index-completion was chosen). A leaf Service itself
+-- (nothing but PlayerDataService requires it back... and PlayerDataService
+-- is a leaf too), so every reference to it elsewhere is a safe top-level
+-- require, no laziness needed.
+--
+-- Phase 8: discoveries now live in PlayerDataService's persisted table
+-- (�4.6/�6.1: permanent, never resets, exactly what a Set already was).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local IndexService = {}
 
-local discovered: { [Player]: { [string]: boolean } } = {}
 local remotesFolder: Folder
 
 local function getDiscoveredSet(player: Player): { [string]: boolean }
-	local set = discovered[player]
-	if not set then
-		set = {}
-		discovered[player] = set
-	end
-	return set
+	return PlayerDataService.Get(player).indexDiscovered
 end
 
 function IndexService.GetDiscoveredCount(player: Player): number
@@ -80,12 +79,8 @@ function IndexService.Init()
 	remotesFolder = RemotesSetup.CreateAll()
 
 	Players.PlayerAdded:Connect(function(player: Player)
-		getDiscoveredSet(player)
+		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushIndexData(player)
-	end)
-
-	Players.PlayerRemoving:Connect(function(player: Player)
-		discovered[player] = nil
 	end)
 
 	print("[IndexService] Init")

@@ -11,8 +11,10 @@
 -- roll Loot at the moment of a cart return) and this Service needs
 -- EconomyService (Sell All grants Cash) -- the same mutual-dependency shape
 -- as every other cross-Service edge since Phase 3, resolved the same way.
--- IndexService is a leaf (nothing requires it back), so it's a safe
--- top-level require.
+-- IndexService and PlayerDataService are leaves (nothing requires them
+-- back), so they're safe top-level requires.
+--
+-- Phase 8: the Bag now lives in PlayerDataService's persisted table.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -23,18 +25,14 @@ local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 local WorldService = require(script.Parent.WorldService)
 local IndexService = require(script.Parent.IndexService)
 
-export type BagEntry = {
-	itemId: string,
-	count: number,
-	sealed: boolean,
-}
+export type BagEntry = PlayerDataService.BagEntry
 
 local LootService = {}
 
-local playerBags: { [Player]: { BagEntry } } = {}
 local remotesFolder: Folder
 
 local economyServiceCache: { AddCash: (Player, number) -> () }? = nil
@@ -46,12 +44,7 @@ local function getEconomyService()
 end
 
 local function getBag(player: Player): { BagEntry }
-	local bag = playerBags[player]
-	if not bag then
-		bag = {}
-		playerBags[player] = bag
-	end
-	return bag
+	return PlayerDataService.Get(player).lootBag
 end
 
 local function pushBagData(player: Player)
@@ -164,7 +157,7 @@ local function handleRequestSellLoot(player: Player, useX2: boolean?)
 		total *= 2
 	end
 
-	playerBags[player] = remaining
+	PlayerDataService.Get(player).lootBag = remaining
 	pushBagData(player)
 	getEconomyService().AddCash(player, total)
 
@@ -199,12 +192,8 @@ function LootService.Init()
 	end
 
 	Players.PlayerAdded:Connect(function(player: Player)
-		getBag(player)
+		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushBagData(player)
-	end)
-
-	Players.PlayerRemoving:Connect(function(player: Player)
-		playerBags[player] = nil
 	end)
 
 	-- Command-Bar-only test hook (same rationale/pattern as EconomyService's

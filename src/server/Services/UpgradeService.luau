@@ -2,8 +2,12 @@
 -- Tracks the five purchasable stat levels and exposes cost/effect via
 -- EconomyMath (�5.2/�3.7). Currency mutation itself stays owned by
 -- EconomyService (�5.2's stated responsibility split) -- this Service only
--- owns levels and the immediate side effect a level has on the character
--- (Mobility's WalkSpeed).
+-- owns the immediate side effect a level has on the character (Mobility's
+-- WalkSpeed).
+--
+-- Phase 8: levels now live in PlayerDataService's persisted table
+-- (PlayerDataService is a pure leaf that boots before this Service, so
+-- requiring it at the top level is always safe).
 --
 -- EconomyService is required lazily (on first use, not at module top level)
 -- because Phase 3 introduced a genuine mutual dependency: EconomyService's
@@ -19,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local economyServiceCache: { TrySpendCash: (Player, number) -> boolean, GetCash: (Player) -> number }? = nil
 local function getEconomyService()
@@ -30,29 +35,15 @@ end
 
 type UpgradeStatName = EconomyConfig.UpgradeStatName
 
-export type UpgradeLevels = {
-	capacity: number,
-	agility: number,
-	mobility: number,
-	range: number,
-	pushPower: number,
-}
-
 local UpgradeService = {}
 
 local STAT_NAMES: { UpgradeStatName } = { "capacity", "agility", "mobility", "range", "pushPower" }
 local MAX_PURCHASE_QUANTITY = 999 -- sane upper bound; "Buy Max Affordable" UI lands in Phase 9
 
-local playerUpgrades: { [Player]: UpgradeLevels } = {}
 local remotesFolder: Folder
 
-local function getLevels(player: Player): UpgradeLevels
-	local levels = playerUpgrades[player]
-	if not levels then
-		levels = { capacity = 0, agility = 0, mobility = 0, range = 0, pushPower = 0 }
-		playerUpgrades[player] = levels
-	end
-	return levels
+local function getLevels(player: Player): PlayerDataService.UpgradeLevels
+	return PlayerDataService.Get(player).upgrades
 end
 
 function UpgradeService.GetLevel(player: Player, stat: UpgradeStatName): number
@@ -129,15 +120,11 @@ function UpgradeService.Init()
 	end
 
 	Players.PlayerAdded:Connect(function(player: Player)
-		getLevels(player)
+		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushUpgradeData(player)
 		player.CharacterAdded:Connect(function()
 			applyMobilityEffect(player)
 		end)
-	end)
-
-	Players.PlayerRemoving:Connect(function(player: Player)
-		playerUpgrades[player] = nil
 	end)
 
 	print("[UpgradeService] Init")

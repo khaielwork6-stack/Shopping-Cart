@@ -4,10 +4,12 @@
 -- player's current World (�5.6's Phase 5 note: a farming-in-an-old-World
 -- player still gets the news).
 --
--- EconomyService is required lazily: EconomyService needs this Service (to
--- find the current World's Corral) and this Service needs EconomyService
--- (for Total Level) -- a top-level require on both sides would deadlock,
--- same as the UpgradeService/PushPowerService edges from Phases 3-4.
+-- Phase 8: currentWorld/unlockedWorlds now live in PlayerDataService's
+-- persisted table. EconomyService is required lazily: EconomyService needs
+-- this Service (to find the current World's Corral) and this Service needs
+-- EconomyService (for Total Level) -- a top-level require on both sides
+-- would deadlock, same as the UpgradeService/PushPowerService edges from
+-- Phases 3-4. PlayerDataService is a leaf, so it's a safe top-level require.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -15,11 +17,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local WorldService = {}
 
-local currentWorld: { [Player]: number } = {}
-local unlockedWorlds: { [Player]: { [number]: boolean } } = {}
 local remotesFolder: Folder
 
 local economyServiceCache: { GetLevelState: (Player) -> { totalLevel: number } }? = nil
@@ -31,16 +32,11 @@ local function getEconomyService()
 end
 
 local function getUnlockedSet(player: Player): { [number]: boolean }
-	local set = unlockedWorlds[player]
-	if not set then
-		set = { [1] = true } -- World 1 is always available (matches PushPowerService's Zone 1 base case)
-		unlockedWorlds[player] = set
-	end
-	return set
+	return PlayerDataService.Get(player).unlockedWorlds
 end
 
 function WorldService.GetCurrentWorld(player: Player): number
-	return currentWorld[player] or 1
+	return PlayerDataService.Get(player).currentWorld
 end
 
 function WorldService.IsWorldUnlocked(player: Player, worldId: number): boolean
@@ -65,7 +61,8 @@ end
 -- �4.6/�4.7: Total Level crossing a threshold unlocks that World instantly,
 -- regardless of which World the player is currently in. Polled from
 -- CartSpawnService's existing per-frame player loop (�4.1.1), same pattern
--- as PushPowerService.CheckZoneUnlocks.
+-- as PushPowerService.CheckZoneUnlocks. �6.3: a World unlock is one of the
+-- two events that force an immediate save alongside the 3-minute autosave.
 function WorldService.CheckWorldUnlocks(player: Player)
 	local unlocked = getUnlockedSet(player)
 	local totalLevel = getEconomyService().GetLevelState(player).totalLevel
@@ -83,6 +80,7 @@ function WorldService.CheckWorldUnlocks(player: Player)
 
 	if changed then
 		pushWorldData(player)
+		PlayerDataService.RequestImmediateSave(player)
 	end
 end
 
@@ -102,7 +100,7 @@ local function handleRequestEnterWorldPortal(player: Player, destinationWorldId:
 		return { success = false, reason = "InvalidWorld" }
 	end
 
-	currentWorld[player] = destinationWorldId
+	PlayerDataService.Get(player).currentWorld = destinationWorldId
 
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -126,14 +124,8 @@ function WorldService.Init()
 	end
 
 	Players.PlayerAdded:Connect(function(player: Player)
-		currentWorld[player] = 1
-		getUnlockedSet(player)
+		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushWorldData(player)
-	end)
-
-	Players.PlayerRemoving:Connect(function(player: Player)
-		currentWorld[player] = nil
-		unlockedWorlds[player] = nil
 	end)
 
 	print("[WorldService] Init")

@@ -1,11 +1,17 @@
 --!strict
 -- Cart value/return resolution, currency mutation (�5.2/�4.1/�3.4), and
--- Level/XP/Total Level tracking (�3.2/�3.3). In-memory only (no persistence
--- -- that is Phase 8). Level/XP is kept here rather than a separate
--- LevelingService (Phase 4's own text allows either) because it is earned
--- in the exact same transaction as Cash (�3.2: XP = CashValue/5 per cart),
--- and Rebirth's reset touches both together -- splitting them would just
--- add a cross-service call for no separation-of-concerns benefit.
+-- Level/XP/Total Level tracking (�3.2/�3.3). Level/XP is kept here rather
+-- than a separate LevelingService (Phase 4's own text allows either)
+-- because it is earned in the exact same transaction as Cash (�3.2: XP =
+-- CashValue/5 per cart), and Rebirth's reset touches both together --
+-- splitting them would just add a cross-service call for no separation-of-
+-- concerns benefit.
+--
+-- Phase 8: cash/currentLevel/currentXP/totalLevel/rebirthCount now live in
+-- PlayerDataService's persisted table instead of a private in-memory one.
+-- The in-progress train (uncollected cart cargo) deliberately stays local
+-- and unpersisted -- �4.1.4 states it's liquidated to Cash on disconnect,
+-- not saved as raw cargo (see LiquidateTrainOnLeave).
 --
 -- Phase 3: the Corral return takes real time, gated by Push Power's
 -- SpeedFactor over the highest-Zone item in the train (�4.2's "return-trip-
@@ -24,6 +30,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
 local LootService = require(script.Parent.LootService)
@@ -32,15 +39,6 @@ export type TrainItem = {
 	rarity: string,
 	world: number,
 	zone: number,
-}
-
-export type PlayerState = {
-	cash: number,
-	train: { TrainItem },
-	currentLevel: number,
-	currentXP: number,
-	totalLevel: number,
-	rebirthCount: number,
 }
 
 export type LevelState = {
@@ -54,65 +52,57 @@ local EconomyService = {}
 
 local DWELL_STEP_SECONDS = 0.1
 
-local playerStates: { [Player]: PlayerState } = {}
+local trains: { [Player]: { TrainItem } } = {}
 local isReturning: { [Player]: boolean } = {}
 local remotesFolder: Folder
 
-local function getState(player: Player): PlayerState
-	local state = playerStates[player]
-	if not state then
-		state = {
-			cash = 0,
-			train = {},
-			currentLevel = 1,
-			currentXP = 0,
-			totalLevel = 0,
-			rebirthCount = 0,
-		}
-		playerStates[player] = state
+local function getTrain(player: Player): { TrainItem }
+	local train = trains[player]
+	if not train then
+		train = {}
+		trains[player] = train
 	end
-	return state
+	return train
 end
 
 local function pushPlayerData(player: Player)
-	local state = getState(player)
+	local data = PlayerDataService.Get(player)
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
 	playerDataUpdated:FireClient(player, {
-		cash = state.cash,
-		trainCount = #state.train,
-		currentLevel = state.currentLevel,
-		currentXP = state.currentXP,
-		xpForNextLevel = EconomyMath.GetXPRequired(state.currentLevel),
-		totalLevel = state.totalLevel,
-		rebirthCount = state.rebirthCount,
-		rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(state.rebirthCount),
-		rebirthCashMultiplier = EconomyMath.GetRebirthCashMultiplier(state.rebirthCount),
+		cash = data.cash,
+		trainCount = #getTrain(player),
+		currentLevel = data.currentLevel,
+		currentXP = data.currentXP,
+		xpForNextLevel = EconomyMath.GetXPRequired(data.currentLevel),
+		totalLevel = data.totalLevel,
+		rebirthCount = data.rebirthCount,
+		rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(data.rebirthCount),
+		rebirthCashMultiplier = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount),
 	})
 end
 
 -- Public API consumed by CartSpawnService when a claim finalizes.
 function EconomyService.GetTrainCount(player: Player): number
-	return #getState(player).train
+	return #getTrain(player)
 end
 
 function EconomyService.AddCartToTrain(player: Player, item: TrainItem)
-	local state = getState(player)
-	table.insert(state.train, item)
+	table.insert(getTrain(player), item)
 	pushPlayerData(player)
 end
 
 -- Public API consumed by UpgradeService (and any future currency sink) --
 -- EconomyService remains the single owner of currency mutation (�5.2).
 function EconomyService.GetCash(player: Player): number
-	return getState(player).cash
+	return PlayerDataService.Get(player).cash
 end
 
 function EconomyService.TrySpendCash(player: Player, amount: number): boolean
-	local state = getState(player)
-	if state.cash < amount then
+	local data = PlayerDataService.Get(player)
+	if data.cash < amount then
 		return false
 	end
-	state.cash -= amount
+	data.cash -= amount
 	pushPlayerData(player)
 	return true
 end
@@ -121,20 +111,20 @@ end
 -- gain outside a cart return still flows through this single mutation
 -- point (�6.6: no second code path may ever add Cash).
 function EconomyService.AddCash(player: Player, amount: number)
-	local state = getState(player)
-	state.cash += amount
+	local data = PlayerDataService.Get(player)
+	data.cash += amount
 	pushPlayerData(player)
 end
 
 -- Public API consumed by PushPowerService (Rebirth Push Power Multiplier)
 -- and RebirthService (eligibility check + reset).
 function EconomyService.GetLevelState(player: Player): LevelState
-	local state = getState(player)
+	local data = PlayerDataService.Get(player)
 	return {
-		currentLevel = state.currentLevel,
-		currentXP = state.currentXP,
-		totalLevel = state.totalLevel,
-		rebirthCount = state.rebirthCount,
+		currentLevel = data.currentLevel,
+		currentXP = data.currentXP,
+		totalLevel = data.totalLevel,
+		rebirthCount = data.rebirthCount,
 	}
 end
 
@@ -143,28 +133,52 @@ end
 -- Push Power's own reset is UpgradeService's responsibility, called
 -- separately within the same RequestRebirth handler (�4.4's "atomic"
 -- requirement is about no exploitable window between the two, not that
--- they must be a single function call).
+-- they must be a single function call). �6.3: Rebirth is one of the two
+-- events that force an immediate save alongside the 3-minute autosave.
 function EconomyService.PerformRebirthReset(player: Player): number
-	local state = getState(player)
-	state.currentLevel = 1
-	state.currentXP = 0
-	state.rebirthCount += 1
+	local data = PlayerDataService.Get(player)
+	data.currentLevel = 1
+	data.currentXP = 0
+	data.rebirthCount += 1
+	data.lifetimeStats.totalRebirths += 1
 	pushPlayerData(player)
-	return state.rebirthCount
+	PlayerDataService.RequestImmediateSave(player)
+	return data.rebirthCount
+end
+
+-- �4.1.4: uncollected train cargo is liquidated to Cash (never XP, never a
+-- Loot roll -- the Guide is specific that only "Cash value" is preserved)
+-- the moment a player disconnects, rather than persisted as raw cargo.
+-- Called by PlayerDataService just before it saves on leave/BindToClose.
+function EconomyService.LiquidateTrainOnLeave(player: Player)
+	local train = getTrain(player)
+	if #train == 0 then
+		return
+	end
+
+	local data = PlayerDataService.Get(player)
+	local rebirthCashMult = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount)
+	local total = 0
+	for _, item in train do
+		total += EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, rebirthCashMult)
+	end
+
+	data.cash += total
+	table.clear(train)
 end
 
 -- �3.2: awards XP (CashValue/5, min 1, per cart) and cascades level-ups;
 -- Total Level increments once per level gained and never decreases.
-local function awardXPAndLevelUp(state: PlayerState, xpEarned: number)
-	state.currentXP += xpEarned
+local function awardXPAndLevelUp(data: PlayerDataService.PlayerDataSchema, xpEarned: number)
+	data.currentXP += xpEarned
 	while true do
-		local required = EconomyMath.GetXPRequired(state.currentLevel)
-		if state.currentXP < required then
+		local required = EconomyMath.GetXPRequired(data.currentLevel)
+		if data.currentXP < required then
 			break
 		end
-		state.currentXP -= required
-		state.currentLevel += 1
-		state.totalLevel += 1
+		data.currentXP -= required
+		data.currentLevel += 1
+		data.totalLevel += 1
 	end
 end
 
@@ -200,9 +214,9 @@ end
 -- single World in practice (claiming is gated to the player's current
 -- World, �3.5.4/Phase 5), but this compares (world, zone) pairs directly
 -- rather than assuming that to stay correct if that ever changes.
-local function getReturnSpeedFactor(player: Player, state: PlayerState): number
+local function getReturnSpeedFactor(player: Player, train: { TrainItem }): number
 	local maxWorld, maxZone = 1, 1
-	for _, item in state.train do
+	for _, item in train do
 		if item.world > maxWorld or (item.world == maxWorld and item.zone > maxZone) then
 			maxWorld = item.world
 			maxZone = item.zone
@@ -216,9 +230,9 @@ local function handleRequestReturnCarts(player: Player)
 		return { success = false, reason = "AlreadyReturning" }
 	end
 
-	local state = getState(player)
+	local train = getTrain(player)
 
-	if #state.train == 0 then
+	if #train == 0 then
 		return { success = false, reason = "TrainEmpty" }
 	end
 
@@ -228,7 +242,7 @@ local function handleRequestReturnCarts(player: Player)
 
 	isReturning[player] = true
 
-	local speedFactor = getReturnSpeedFactor(player, state)
+	local speedFactor = getReturnSpeedFactor(player, train)
 	local duration = EconomyConfig.Resistance.BaseReturnDuration / speedFactor
 
 	local elapsed = 0
@@ -244,16 +258,18 @@ local function handleRequestReturnCarts(player: Player)
 			isReturning[player] = nil
 			return { success = false, reason = "LeftCorralEarly" }
 		end
-		if #state.train == 0 then
+		if #train == 0 then
 			isReturning[player] = nil
 			return { success = false, reason = "TrainEmpty" }
 		end
 	end
 
-	local rebirthCashMult = EconomyMath.GetRebirthCashMultiplier(state.rebirthCount)
+	local data = PlayerDataService.Get(player)
+	local rebirthCashMult = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount)
 	local total = 0
 	local xpEarned = 0
-	for _, item in state.train do
+	local cartsReturned = #train
+	for _, item in train do
 		local cashValue = EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, rebirthCashMult)
 		total += cashValue
 		xpEarned += EconomyMath.GetXPFromCashValue(cashValue)
@@ -262,13 +278,15 @@ local function handleRequestReturnCarts(player: Player)
 		LootService.RollForCart(player)
 	end
 
-	state.cash += total
-	table.clear(state.train)
-	awardXPAndLevelUp(state, xpEarned)
+	data.cash += total
+	data.lifetimeStats.totalCashEarned += total
+	data.lifetimeStats.totalCartsReturned += cartsReturned
+	table.clear(train)
+	awardXPAndLevelUp(data, xpEarned)
 	isReturning[player] = nil
 	pushPlayerData(player)
 
-	return { success = true, cashEarned = total, newCash = state.cash, xpEarned = xpEarned }
+	return { success = true, cashEarned = total, newCash = data.cash, xpEarned = xpEarned }
 end
 
 function EconomyService.Init()
@@ -280,12 +298,13 @@ function EconomyService.Init()
 	end
 
 	Players.PlayerAdded:Connect(function(player: Player)
-		getState(player)
+		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
+		getTrain(player)
 		pushPlayerData(player)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)
-		playerStates[player] = nil
+		trains[player] = nil
 		isReturning[player] = nil
 	end)
 
@@ -299,8 +318,8 @@ function EconomyService.Init()
 	debugGrantXP.Name = "DebugGrantXP"
 	debugGrantXP.Parent = script
 	debugGrantXP.OnInvoke = function(player: Player, amount: number)
-		local state = getState(player)
-		awardXPAndLevelUp(state, amount)
+		local data = PlayerDataService.Get(player)
+		awardXPAndLevelUp(data, amount)
 		pushPlayerData(player)
 	end
 
