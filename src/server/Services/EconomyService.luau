@@ -26,6 +26,7 @@ local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
+local LootService = require(script.Parent.LootService)
 
 export type TrainItem = {
 	rarity: string,
@@ -114,6 +115,15 @@ function EconomyService.TrySpendCash(player: Player, amount: number): boolean
 	state.cash -= amount
 	pushPlayerData(player)
 	return true
+end
+
+-- Public API consumed by LootService (Sell All / Sell x2) -- any currency
+-- gain outside a cart return still flows through this single mutation
+-- point (�6.6: no second code path may ever add Cash).
+function EconomyService.AddCash(player: Player, amount: number)
+	local state = getState(player)
+	state.cash += amount
+	pushPlayerData(player)
 end
 
 -- Public API consumed by PushPowerService (Rebirth Push Power Multiplier)
@@ -247,6 +257,9 @@ local function handleRequestReturnCarts(player: Player)
 		local cashValue = EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, rebirthCashMult)
 		total += cashValue
 		xpEarned += EconomyMath.GetXPFromCashValue(cashValue)
+
+		-- �4.5: per-cart Loot roll, independent of this Cash rarity roll.
+		LootService.RollForCart(player)
 	end
 
 	state.cash += total
