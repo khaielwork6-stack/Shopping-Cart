@@ -76,6 +76,7 @@ export type PlayerDataSchema = {
 	indexDiscovered: { [string]: boolean },
 	settings: Settings,
 	lifetimeStats: LifetimeStats,
+	grantedPurchaseIds: { [string]: boolean }, -- Phase 11 (§6.6): every ProcessReceipt PurchaseId ever granted, so a retried receipt after a mid-grant crash can never double-grant
 	lastSaved: number,
 }
 
@@ -102,6 +103,7 @@ local DEFAULT_PLAYER_DATA: PlayerDataSchema = {
 	indexDiscovered = {},
 	settings = { musicVolume = 0.5, sfxVolume = 0.8, uiScale = 1.0 },
 	lifetimeStats = { totalCashEarned = 0, totalCartsReturned = 0, totalRebirths = 0, bestSingleReturn = 0 },
+	grantedPurchaseIds = {},
 	lastSaved = 0,
 }
 
@@ -261,6 +263,16 @@ local function validateAndBackfill(raw: any): PlayerDataSchema
 		data.indexDiscovered = validDiscovered
 	end
 
+	if type(raw.grantedPurchaseIds) == "table" then
+		local validGranted = {}
+		for _, purchaseId in raw.grantedPurchaseIds do
+			if type(purchaseId) == "string" then
+				validGranted[purchaseId] = true
+			end
+		end
+		data.grantedPurchaseIds = validGranted
+	end
+
 	if type(raw.settings) == "table" then
 		if type(raw.settings.musicVolume) == "number" then
 			data.settings.musicVolume = math.clamp(raw.settings.musicVolume, 0, 1)
@@ -301,6 +313,12 @@ local function serializeForSave(data: PlayerDataSchema): any
 		table.insert(discoveredArray, itemId)
 	end
 	copy.indexDiscovered = discoveredArray
+
+	local grantedArray = {}
+	for purchaseId in data.grantedPurchaseIds do
+		table.insert(grantedArray, purchaseId)
+	end
+	copy.grantedPurchaseIds = grantedArray
 
 	copy.lastSaved = os.time()
 	return copy

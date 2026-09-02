@@ -153,4 +153,56 @@ EconomyConfig.Save = {
 	MaxRetryAttempts = 3,
 }
 
+-- Monetization (PROPOSED ADDITION per the Guide's �12 -- every multiplier
+-- here was calculated against �3.9's pacing model, not guessed). Product
+-- IDs are placeholders (0 = "not yet configured") until the corresponding
+-- Gamepass/Dev Product is actually created for this experience on the
+-- Creator Dashboard and its real numeric ID is pasted in here -- nothing
+-- in MonetizationService calls MarketplaceService for an id of 0, so an
+-- unconfigured product is simply inert rather than erroring.
+EconomyConfig.Monetization = {
+	GamepassIds = {
+		TwoXCash = 0,
+		LuckBoost = 0,
+		CapacityPlus = 0,
+		VIP = 0,
+		AutoSellLoot = 0,
+		SellX2 = 0,
+	},
+	DevProductIds = {
+		TempTwoXCash = 0,
+		TempLuckBoost = 0,
+		GemPackSmall = 0,
+		GemPackMedium = 0,
+		GemPackLarge = 0,
+		StarterPack = 0,
+	},
+
+	-- �12.2 calculated effects
+	TwoXCashMultiplier = 2,
+	LuckBoostMultiplier = 2,
+	CapacityPlusBonus = 10, -- flat +10 train slots
+	VIPCashBonus = 0.10, -- +10% passive Cash, deliberately the weakest numeric effect (VIP should sell on status/cosmetics, not power)
+
+	-- �12.3 Dev products
+	TempBoostDurationSeconds = 1800, -- 30 min
+	GemPackAmounts = { Small = 100, Medium = 550, Large = 1200 },
+
+	-- �12.2 Starter Pack: a small Cash+Gems grant plus 1-2 early
+	-- Capacity/Agility levels pre-bought -- calibrated to be worth roughly
+	-- the first 10-15 minutes of grinding, never enough alone to skip an
+	-- entire World. Explicitly never Push Power (�12.1/�12.4).
+	StarterPack = {
+		Cash = 500,
+		Gems = 50,
+		CapacityLevels = 1,
+		AgilityLevels = 1,
+	},
+
+	-- �12.5: no AFK/full-automation product -- Auto-Sell Loot is the one
+	-- sanctioned automation-adjacent gamepass, and even it only ever saves
+	-- a repetitive trip, never plays the core loop for the player.
+	AutoSellIntervalSeconds = 60,
+}
+
 return EconomyConfig

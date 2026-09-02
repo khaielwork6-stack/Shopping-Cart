@@ -43,6 +43,17 @@ local function getEconomyService()
 	return economyServiceCache :: any
 end
 
+-- Lazy: MonetizationService's Auto-Sell Loot loop already requires
+-- LootService (to call SellAll), so a top-level require here would deadlock
+-- Luau's require() at boot -- deferring this one edge breaks the cycle.
+local monetizationServiceCache: { OwnsSellX2: (Player) -> boolean }? = nil
+local function getMonetizationService()
+	if not monetizationServiceCache then
+		monetizationServiceCache = require(script.Parent.MonetizationService) :: any
+	end
+	return monetizationServiceCache :: any
+end
+
 local function getBag(player: Player): { BagEntry }
 	return PlayerDataService.Get(player).lootBag
 end
@@ -83,7 +94,7 @@ end
 -- �4.5: per-cart Loot roll, independent of the Cash rarity roll. Called by
 -- EconomyService once per returned cart, at the moment of return.
 function LootService.RollForCart(player: Player)
-	local luck = IndexService.GetLuck(player)
+	local luck = IndexService.GetLuck(player) * getMonetizationService().GetLuckMultiplier(player)
 
 	if not rollDropOnly(luck) then
 		return
@@ -125,11 +136,11 @@ local function isPlayerAtSellNPC(player: Player): boolean
 	return (root.Position - npcRoot.Position).Magnitude <= 10
 end
 
-local function handleRequestSellLoot(player: Player, useX2: boolean?)
-	if not isPlayerAtSellNPC(player) then
-		return { success = false, reason = "NotAtNPC" }
-	end
-
+-- Core sell logic, shared by the manual (NPC-gated) RemoteFunction path and
+-- Auto-Sell Loot's periodic loop (which deliberately bypasses the NPC
+-- check -- §12.2's whole point is not needing to walk there). Both paths
+-- mutate Cash through this single function, never a duplicate path (§6.6).
+local function sellBag(player: Player, useX2: boolean?): { success: boolean, reason: string?, cashEarned: number? }
 	local bag = getBag(player)
 	local total = 0
 	local remaining: { BagEntry } = {}
@@ -149,11 +160,8 @@ local function handleRequestSellLoot(player: Player, useX2: boolean?)
 		return { success = false, reason = "NothingToSell" }
 	end
 
-	-- Sell x2 (�12.2/�12.3 gamepass): the multiplier code path exists now,
-	-- but no gamepass-ownership system exists until Phase 11 -- always
-	-- resolves to "not owned" until then, per Phase 6's own scope note.
-	local ownsSellX2 = false
-	if useX2 and ownsSellX2 then
+	-- §12.2/§12.3 Sell x2 gamepass.
+	if useX2 and getMonetizationService().OwnsSellX2(player) then
 		total *= 2
 	end
 
@@ -162,6 +170,18 @@ local function handleRequestSellLoot(player: Player, useX2: boolean?)
 	getEconomyService().AddCash(player, total)
 
 	return { success = true, cashEarned = total }
+end
+
+local function handleRequestSellLoot(player: Player, useX2: boolean?)
+	if not isPlayerAtSellNPC(player) then
+		return { success = false, reason = "NotAtNPC" }
+	end
+	return sellBag(player, useX2)
+end
+
+-- Public API consumed by MonetizationService's Auto-Sell Loot loop.
+function LootService.SellAll(player: Player)
+	sellBag(player, false)
 end
 
 local function handleRequestOpenSealedItem(player: Player, itemId: string)

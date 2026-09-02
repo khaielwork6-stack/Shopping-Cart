@@ -18,6 +18,12 @@ RemotesSetup.CreateAll()
 
 local BOOT_ORDER = {
 	{ Name = "PlayerDataService", Module = script.Services.PlayerDataService },
+	-- Phase 11: every other Service below reads Monetization effects
+	-- (GetCashMultiplier/GetLuckMultiplier/GetCapacityBonus/OwnsSellX2) via
+	-- a top-level require, so this only needs to boot before them for
+	-- consistency/clarity -- none of those functions actually depend on
+	-- MonetizationService.Init() having run yet, only PlayerDataService.
+	{ Name = "MonetizationService", Module = script.Services.MonetizationService },
 	{ Name = "EconomyService", Module = script.Services.EconomyService },
 	{ Name = "UpgradeService", Module = script.Services.UpgradeService },
 	{ Name = "PushPowerService", Module = script.Services.PushPowerService },

@@ -34,6 +34,7 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
 local LootService = require(script.Parent.LootService)
+local MonetizationService = require(script.Parent.MonetizationService)
 
 export type TrainItem = {
 	rarity: string,
@@ -265,12 +266,16 @@ local function handleRequestReturnCarts(player: Player)
 	end
 
 	local data = PlayerDataService.Get(player)
-	local rebirthCashMult = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount)
+	-- §12.2: 2x Cash/VIP multiply the same final Cash value the Rebirth
+	-- multiplier already scales, never a separate/parallel path (§12's
+	-- design constraint) -- XP scales with it too, consistent with how
+	-- rebirthCashMult already flowed into XP before Monetization existed.
+	local cashMultiplier = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount) * MonetizationService.GetCashMultiplier(player)
 	local total = 0
 	local xpEarned = 0
 	local cartsReturned = #train
 	for _, item in train do
-		local cashValue = EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, rebirthCashMult)
+		local cashValue = EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, cashMultiplier)
 		total += cashValue
 		xpEarned += EconomyMath.GetXPFromCashValue(cashValue)
 

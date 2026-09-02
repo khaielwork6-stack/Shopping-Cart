@@ -24,6 +24,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local MonetizationService = require(script.Parent.MonetizationService)
 
 local economyServiceCache: { TrySpendCash: (Player, number) -> boolean, GetCash: (Player) -> number }? = nil
 local function getEconomyService()
@@ -50,8 +51,11 @@ function UpgradeService.GetLevel(player: Player, stat: UpgradeStatName): number
 	return getLevels(player)[stat]
 end
 
+-- §12.2 Capacity+ gamepass: a flat bonus on top of purchased levels, not a
+-- multiplier -- comparable in effect to being several Capacity levels
+-- ahead, per the Guide's own description.
 function UpgradeService.GetCapacity(player: Player): number
-	return EconomyMath.GetTrainCapacity(getLevels(player).capacity)
+	return EconomyMath.GetTrainCapacity(getLevels(player).capacity) + MonetizationService.GetCapacityBonus(player)
 end
 
 local function applyMobilityEffect(player: Player)

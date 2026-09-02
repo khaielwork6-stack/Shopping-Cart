@@ -24,6 +24,7 @@ local UpgradeService = require(script.Parent.UpgradeService)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
 local IndexService = require(script.Parent.IndexService)
+local MonetizationService = require(script.Parent.MonetizationService)
 
 local CartSpawnService = {}
 
@@ -78,7 +79,9 @@ end
 
 local function rollRarity(worldId: number, position: Vector3): string
 	local nearestPlayer = findNearestPlayerInWorld(worldId, position)
-	local luck = nearestPlayer and IndexService.GetLuck(nearestPlayer) or 1
+	local luck = nearestPlayer
+		and IndexService.GetLuck(nearestPlayer) * MonetizationService.GetLuckMultiplier(nearestPlayer)
+		or 1
 	local weights = EconomyMath.LuckReallocate(luck)
 	return EconomyMath.RollRarity(weights)
 end
