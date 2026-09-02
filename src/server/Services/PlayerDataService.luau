@@ -32,6 +32,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
 local Migrations = require(script.Parent.Parent.Migrations)
+local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 
 export type UpgradeLevels = {
 	capacity: number,
@@ -432,6 +433,19 @@ function PlayerDataService.Init()
 	end)
 
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+	local remotesFolder = RemotesSetup.CreateAll()
+	local requestUpdateSettings = remotesFolder:FindFirstChild("RequestUpdateSettings") :: RemoteFunction
+	requestUpdateSettings.OnServerInvoke = function(player: Player, musicVolume: number?, sfxVolume: number?)
+		local data = PlayerDataService.Get(player)
+		if type(musicVolume) == "number" then
+			data.settings.musicVolume = math.clamp(musicVolume, 0, 1)
+		end
+		if type(sfxVolume) == "number" then
+			data.settings.sfxVolume = math.clamp(sfxVolume, 0, 1)
+		end
+		return { success = true }
+	end
 
 	game:BindToClose(function()
 		-- Final blocking pass: every currently-connected player gets the

@@ -17,6 +17,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
+local FormatNumber = require(ReplicatedStorage.Shared.Modules.FormatNumber)
 
 local TrainController = {}
 
@@ -128,20 +129,25 @@ end
 -- Phase 3: the server call itself now blocks for the real resistance-gated
 -- dwell duration (�4.2), so debounce just needs to cover the in-flight
 -- InvokeServer call -- no fixed extra wait needed.
-local function tryReturnCarts(remotesFolder: Folder)
+local function tryReturnCarts(remotesFolder: Folder, uiAnimationController: any)
 	if returnDebounce then
 		return
 	end
 	returnDebounce = true
 
 	local requestReturnCarts = remotesFolder:FindFirstChild("RequestReturnCarts") :: RemoteFunction
-	requestReturnCarts:InvokeServer()
+	local result = requestReturnCarts:InvokeServer() :: { success: boolean, cashEarned: number? }
+
+	if result and result.success and result.cashEarned then
+		uiAnimationController.ShowNotification("ReturnComplete", "+$" .. FormatNumber.Format(result.cashEarned) .. " returned!")
+	end
 
 	returnDebounce = false
 end
 
 function TrainController.Init()
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
+	local uiAnimationController = require(script.Parent.UIAnimationController)
 	cartTemplate = ReplicatedStorage.Assets.Placeholders.PH_Cart_Common
 
 	-- PlayerDataUpdated pushes a diff (�5.2), not a full replace -- different
@@ -173,7 +179,7 @@ function TrainController.Init()
 		corral.Touched:Connect(function(hit: BasePart)
 			local character = player.Character
 			if character and hit:IsDescendantOf(character) then
-				tryReturnCarts(remotesFolder)
+				tryReturnCarts(remotesFolder, uiAnimationController)
 			end
 		end)
 	end

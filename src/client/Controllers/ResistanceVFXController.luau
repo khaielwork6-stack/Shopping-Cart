@@ -132,6 +132,7 @@ end
 
 function ResistanceVFXController.Init()
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
+	local uiAnimationController = require(script.Parent.UIAnimationController)
 
 	-- PH_SFX_ZoneUnlock (�7): no SoundId set yet -- a future art pass fills
 	-- this in; :Play() is already correctly wired.
@@ -164,6 +165,7 @@ function ResistanceVFXController.Init()
 	local zoneUnlocked = remotesFolder:FindFirstChild("ZoneUnlocked") :: RemoteEvent
 	zoneUnlocked.OnClientEvent:Connect(function()
 		playZoneUnlockFanfare()
+		uiAnimationController.ShowNotification("ZoneUnlocked")
 	end)
 
 	-- �4.7/�8 World unlock sequence: reuse the same Corral-burst fanfare --
@@ -171,6 +173,7 @@ function ResistanceVFXController.Init()
 	local worldUnlocked = remotesFolder:FindFirstChild("WorldUnlocked") :: RemoteEvent
 	worldUnlocked.OnClientEvent:Connect(function()
 		playZoneUnlockFanfare()
+		uiAnimationController.ShowNotification("ZoneUnlocked")
 	end)
 
 	RunService.Heartbeat:Connect(onHeartbeat)

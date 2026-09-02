@@ -16,6 +16,7 @@ local REMOTES: { [string]: RemoteKind } = {
 	RequestSellLoot = "RemoteFunction",
 	RequestOpenSealedItem = "RemoteFunction",
 	RequestEnterWorldPortal = "RemoteFunction",
+	RequestUpdateSettings = "RemoteFunction",
 
 	-- server -> client, RemoteEvent (past-tense-noun-named per �5.7)
 	CartClaimed = "RemoteEvent",
