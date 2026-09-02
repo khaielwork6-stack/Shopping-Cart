@@ -67,9 +67,14 @@ local function applyMobilityEffect(player: Player)
 	end
 end
 
+-- §13 QA: RequestPlayerDataSnapshot's source for this Service's slice.
+function UpgradeService.GetSnapshot(player: Player): { [string]: any }
+	return { upgrades = table.clone(getLevels(player)) }
+end
+
 local function pushUpgradeData(player: Player)
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated:FireClient(player, { upgrades = table.clone(getLevels(player)) })
+	playerDataUpdated:FireClient(player, UpgradeService.GetSnapshot(player))
 end
 
 -- Public API consumed by RebirthService (�4.4: "Push Power level -- back to

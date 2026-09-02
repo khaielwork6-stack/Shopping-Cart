@@ -49,3 +49,46 @@ print("[Main] Boot complete. Services initialized in order: " .. table.concat((f
 	end
 	return names
 end)(), ", "))
+
+-- §13 QA: fixes a real join-time race -- six Services above each push their
+-- own slice of PlayerDataUpdated independently, the instant their own
+-- PlayerAdded handler's WaitForLoad resolves. DataStore loads often resolve
+-- before the client has finished requiring every Controller and connecting
+-- its OnClientEvent listener, so those pushes fire and are gone before
+-- anyone's listening -- the client was left rendering its hardcoded
+-- fallback defaults (Level 1, every upgrade 0) until some *later*,
+-- unrelated push happened to arrive with a fresh full slice and silently
+-- "fixed" it. The client now pulls this once, synchronously, at the very
+-- start of boot, before rendering anything -- a pull can't lose a race the
+-- way a push can. require()s below are cheap (Luau caches per-Instance),
+-- not fresh copies, since every Service above is already required by name.
+local PlayerDataService = require(script.Services.PlayerDataService)
+local EconomyService = require(script.Services.EconomyService)
+local UpgradeService = require(script.Services.UpgradeService)
+local WorldService = require(script.Services.WorldService)
+local LootService = require(script.Services.LootService)
+local IndexService = require(script.Services.IndexService)
+local PushPowerService = require(script.Services.PushPowerService)
+
+local remotesFolder = RemotesSetup.CreateAll()
+local requestPlayerDataSnapshot = remotesFolder:FindFirstChild("RequestPlayerDataSnapshot") :: RemoteFunction
+requestPlayerDataSnapshot.OnServerInvoke = function(player: Player)
+	PlayerDataService.WaitForLoad(player)
+
+	local snapshot: { [string]: any } = {}
+	for _, getSnapshot in {
+		EconomyService.GetSnapshot,
+		UpgradeService.GetSnapshot,
+		WorldService.GetSnapshot,
+		LootService.GetSnapshot,
+		IndexService.GetSnapshot,
+		PushPowerService.GetSnapshot,
+	} do
+		for key, value in getSnapshot(player) do
+			snapshot[key] = value
+		end
+	end
+	snapshot.settings = PlayerDataService.Get(player).settings
+
+	return snapshot
+end

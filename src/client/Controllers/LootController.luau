@@ -151,7 +151,23 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 	end)
 end
 
-function LootController.Init()
+-- §13 QA: `isInitial` suppresses the "LootFound" toast for RequestPlayerData
+-- Snapshot's one-shot boot pull -- a returning player with a half-full Bag
+-- must never see a found-item celebration fire the instant they join.
+local function applyDataUpdate(requestOpenSealedItem: RemoteFunction, data: { lootBag: { BagEntry }? }, isInitial: boolean?)
+	if data.lootBag ~= nil then
+		bag = data.lootBag
+		renderBag(requestOpenSealedItem)
+
+		local newCount = totalItemCount()
+		if not isInitial and newCount > previousBagCount then
+			uiAnimationController.ShowNotification("LootFound")
+		end
+		previousBagCount = newCount
+	end
+end
+
+function LootController.Init(initialSnapshot: { lootBag: { BagEntry }? }?)
 	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 	local screenGui = playerGui:WaitForChild("ScreenGui") :: ScreenGui
 	uiAnimationController = require(script.Parent.UIAnimationController)
@@ -165,22 +181,18 @@ function LootController.Init()
 	local requestSellLoot = remotesFolder:FindFirstChild("RequestSellLoot") :: RemoteFunction
 	local requestOpenSealedItem = remotesFolder:FindFirstChild("RequestOpenSealedItem") :: RemoteFunction
 
-	renderBag(requestOpenSealedItem)
 	renderSellButton()
 	connectSellNPCs(requestSellLoot)
 
+	if initialSnapshot then
+		applyDataUpdate(requestOpenSealedItem, initialSnapshot, true)
+	else
+		renderBag(requestOpenSealedItem)
+	end
+
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
 	playerDataUpdated.OnClientEvent:Connect(function(data: { lootBag: { BagEntry }? })
-		if data.lootBag ~= nil then
-			bag = data.lootBag
-			renderBag(requestOpenSealedItem)
-
-			local newCount = totalItemCount()
-			if newCount > previousBagCount then
-				uiAnimationController.ShowNotification("LootFound")
-			end
-			previousBagCount = newCount
-		end
+		applyDataUpdate(requestOpenSealedItem, data)
 	end)
 
 	print("[LootController] Init")

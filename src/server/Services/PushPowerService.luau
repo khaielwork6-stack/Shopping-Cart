@@ -67,6 +67,20 @@ function PushPowerService.GetSpeedFactorForZone(player: Player, worldId: number,
 	return EconomyMath.GetSpeedFactor(effectivePower, requirement)
 end
 
+-- §13 QA: RequestPlayerDataSnapshot's source for this Service's slice.
+-- Zone-unlock frontier itself is never persisted (a pure function of
+-- already-persisted Push Power/Rebirth state, re-derived each session --
+-- see this file's own header comment), so worldId 1 here is only ever a
+-- display default for the client's very first render, same as
+-- Init's own PlayerAdded push already assumed.
+function PushPowerService.GetSnapshot(player: Player): { [string]: any }
+	local worldId = WorldService.GetCurrentWorld(player)
+	return {
+		unlockedZoneIndex = getUnlocked(player, worldId),
+		unlockedZoneIndexWorld = worldId,
+	}
+end
+
 local function pushZoneData(player: Player, worldId: number)
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
 	playerDataUpdated:FireClient(player, {

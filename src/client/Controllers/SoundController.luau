@@ -11,6 +11,7 @@
 
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -25,6 +26,12 @@ local player = Players.LocalPlayer
 -- arrive, so there's never a silent/full-volume flash in between.
 local DEFAULT_MUSIC_VOLUME = 0.5
 local DEFAULT_SFX_VOLUME = 0.8
+
+-- How long the fade in/out itself takes, at the start of the track and
+-- again right before it loops back to the start -- long enough to read as
+-- an intentional fade, short enough that the track still feels like it's
+-- almost always at full volume.
+local MUSIC_FADE_TIME = 2.5
 
 local musicGroup: SoundGroup
 local sfxGroup: SoundGroup
@@ -80,23 +87,58 @@ function SoundController.ApplySettings(settings: { musicVolume: number?, sfxVolu
 	end
 end
 
-function SoundController.Init()
+-- Fades the track in at the start of every loop, then fades it back out
+-- right before Roblox's own seamless Looped=true wrap -- this is an
+-- envelope on top of `sound.Volume` (0..1), entirely separate from
+-- `musicGroup.Volume` (the user's saved setting) -- the two multiply
+-- together, so a mid-loop 0.6 setting still reads as loud as it should,
+-- just fading in and out around it rather than snapping.
+local function fadeIn(sound: Sound)
+	sound.Volume = 0
+	TweenService:Create(sound, TweenInfo.new(MUSIC_FADE_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { Volume = 1 }):Play()
+end
+
+local function startFadeLoop(sound: Sound)
+	fadeIn(sound)
+	sound.DidLoop:Connect(function()
+		fadeIn(sound)
+	end)
+
+	task.spawn(function()
+		while sound.Parent do
+			if sound.TimeLength > 0 then
+				local remaining = sound.TimeLength - sound.TimePosition
+				if remaining <= MUSIC_FADE_TIME then
+					TweenService:Create(sound, TweenInfo.new(math.max(remaining, 0.05), Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { Volume = 0 }):Play()
+					task.wait(remaining + 0.05)
+					continue
+				end
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+function SoundController.Init(initialSnapshot: { settings: { musicVolume: number?, sfxVolume: number? }? }?)
 	musicGroup = getOrCreateGroup("Music")
 	sfxGroup = getOrCreateGroup("SFX")
 	musicGroup.Volume = DEFAULT_MUSIC_VOLUME
 	sfxGroup.Volume = DEFAULT_SFX_VOLUME
+	if initialSnapshot and initialSnapshot.settings then
+		SoundController.ApplySettings(initialSnapshot.settings)
+	end
 
-	-- Volume is entirely the SoundGroup's job (driven by the user's saved
-	-- 0-1 setting) -- the instance itself stays at full Volume so the two
-	-- multipliers are never silently compounded into something too quiet.
+	-- SoundGroup Volume is the user's saved setting; this Sound's own
+	-- Volume is the fade envelope above -- the two multiply, never compound
+	-- into something silently too quiet.
 	musicSound = Instance.new("Sound")
 	musicSound.Name = "BackgroundMusic"
 	musicSound.SoundId = SoundConfig.BackgroundMusic
 	musicSound.Looped = true
-	musicSound.Volume = 1
 	musicSound.SoundGroup = musicGroup
 	musicSound.Parent = SoundService
 	musicSound:Play()
+	startFadeLoop(musicSound)
 
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent

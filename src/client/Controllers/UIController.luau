@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
+local UserInputService = game:GetService("UserInputService")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
@@ -285,46 +286,99 @@ end
 -- drag-slider control (our schema stores a volume number, but a toggle is
 -- far simpler to make reliable, and Phase 10 owns actually wiring real
 -- audio -- this just persists the on/off intent).
--- §13 QA: the pack's "Zipper" toggle is a track+knob switch (CanvasGroup
---'knob' at the end of a Frame 'track') -- the old version only ever updated
--- a text label inside the knob ("ON"/"OFF") and never actually moved
--- anything, which is what read as "the slider doesn't move." The knob's
--- Position.X now tweens between the track's two ends on every toggle.
-local KNOB_SLIDE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+-- §13 QA: the pack's "Zipper" control is a track+knob (CanvasGroup 'knob'
+-- riding a Frame 'track') -- the first fix just tweened the knob between
+-- the track's two ends on click, which read as "you either click it to
+-- toggle, it doesn't actually slide." This is now a real drag slider: the
+-- knob follows the pointer continuously (mouse or touch) anywhere along
+-- the track, and a plain click/tap without dragging jumps straight to that
+-- point -- same math, since the press position is exactly where a
+-- would-be drag would start from.
+local PERSIST_THROTTLE_SECONDS = 0.15 -- caps RequestUpdateSettings calls while actively dragging
 local renderSettingsToggles: () -> ()
 
 local function setupSettingsToggles(requestUpdateSettings: RemoteFunction)
 	local scrolling = screenGui.Frames.Settings.ScrollingFrame
 	local renderers: { () -> () } = {}
 
-	local function wireToggle(row: Frame, get: () -> number, set: (number) -> (), persist: (number) -> ())
-		local knob = row.Frame.Zipper.Frame.CanvasGroup
+	local function wireSlider(row: Frame, get: () -> number, set: (number) -> (), persist: (number) -> ())
+		local track = row.Frame.Zipper.Frame
+		track.Active = true -- a plain Frame needs this to receive Input* events at all
+
+		local knob = track.CanvasGroup
 		local priceLabel = knob.Button.Frame.Price
+
+		local function renderAt(fraction: number)
+			knob.Position = UDim2.new(fraction, 0, knob.Position.Y.Scale, knob.Position.Y.Offset)
+			priceLabel.Text = fraction > 0 and "ON" or "OFF"
+		end
+
 		local function render()
-			local on = get() > 0
-			priceLabel.Text = on and "ON" or "OFF"
-			local targetX = on and 1 or 0
-			TweenService:Create(knob, KNOB_SLIDE_INFO, { Position = UDim2.new(targetX, 0, knob.Position.Y.Scale, knob.Position.Y.Offset) }):Play()
+			renderAt(math.clamp(get(), 0, 1))
 		end
 		render()
 		table.insert(renderers, render)
-		knob.Button.MouseButton1Click:Connect(function()
-			local newValue = get() > 0 and 0 or 1
-			set(newValue)
-			render()
-			persist(newValue)
+
+		local dragging = false
+		local lastPersistAt = 0
+
+		local function fractionFromScreenX(screenX: number): number
+			local absSize = track.AbsoluteSize.X
+			if absSize <= 0 then
+				return get()
+			end
+			return math.clamp((screenX - track.AbsolutePosition.X) / absSize, 0, 1)
+		end
+
+		local function updateTo(fraction: number, isFinal: boolean)
+			set(fraction)
+			renderAt(fraction)
 			soundController.ApplySettings(cache.settings)
+
+			local now = os.clock()
+			if isFinal or now - lastPersistAt >= PERSIST_THROTTLE_SECONDS then
+				lastPersistAt = now
+				persist(fraction)
+			end
+		end
+
+		local function isPointerInput(inputType: Enum.UserInputType): boolean
+			return inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch
+		end
+
+		local function beginDrag(input: InputObject)
+			if not isPointerInput(input.UserInputType) then
+				return
+			end
+			dragging = true
+			updateTo(fractionFromScreenX(input.Position.X), false)
+		end
+
+		knob.Button.InputBegan:Connect(beginDrag)
+		track.InputBegan:Connect(beginDrag)
+
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				updateTo(fractionFromScreenX(input.Position.X), false)
+			end
+		end)
+
+		UserInputService.InputEnded:Connect(function(input)
+			if dragging and isPointerInput(input.UserInputType) then
+				dragging = false
+				updateTo(fractionFromScreenX(input.Position.X), true)
+			end
 		end)
 	end
 
-	wireToggle(scrolling.Music, function()
+	wireSlider(scrolling.Music, function()
 		return cache.settings.musicVolume
 	end, function(v)
 		cache.settings.musicVolume = v
 	end, function(v)
 		requestUpdateSettings:InvokeServer(v, nil)
 	end)
-	wireToggle(scrolling.Sound_Effects, function()
+	wireSlider(scrolling.Sound_Effects, function()
 		return cache.settings.sfxVolume
 	end, function(v)
 		cache.settings.sfxVolume = v
@@ -339,7 +393,80 @@ local function setupSettingsToggles(requestUpdateSettings: RemoteFunction)
 	end
 end
 
-function UIController.Init()
+type DataUpdate = {
+	cash: number?,
+	upgrades: { [string]: number }?,
+	currentLevel: number?,
+	currentXP: number?,
+	xpForNextLevel: number?,
+	totalLevel: number?,
+	rebirthCount: number?,
+	rebirthPushPowerMultiplier: number?,
+	rebirthCashMultiplier: number?,
+	currentWorld: number?,
+	settings: { musicVolume: number?, sfxVolume: number? }?,
+}
+
+-- §13 QA: shared by both the one-shot RequestPlayerDataSnapshot pull at
+-- boot and every later PlayerDataUpdated push -- same merge either way, so
+-- there's exactly one place this logic lives. `isInitial` suppresses
+-- celebratory side effects (the level-up burst) for the boot snapshot,
+-- which is catching the client up to reality, not reporting a level gained
+-- just now -- a returning Level 51 player must never see a level-up
+-- fanfare fire the instant they join.
+local function applyDataUpdate(data: DataUpdate, isInitial: boolean?)
+	if data.cash ~= nil then
+		cache.cash = data.cash
+	end
+	if data.upgrades ~= nil then
+		cache.upgrades = data.upgrades
+	end
+	if data.currentLevel ~= nil then
+		if not isInitial and data.currentLevel > cache.currentLevel then
+			playLevelUpBurst()
+		end
+		cache.currentLevel = data.currentLevel
+	end
+	if data.currentXP ~= nil then
+		cache.currentXP = data.currentXP
+	end
+	if data.xpForNextLevel ~= nil then
+		cache.xpForNextLevel = data.xpForNextLevel
+	end
+	if data.totalLevel ~= nil then
+		cache.totalLevel = data.totalLevel
+	end
+	if data.rebirthCount ~= nil then
+		cache.rebirthCount = data.rebirthCount
+	end
+	if data.rebirthPushPowerMultiplier ~= nil then
+		cache.rebirthPushPowerMultiplier = data.rebirthPushPowerMultiplier
+	end
+	if data.rebirthCashMultiplier ~= nil then
+		cache.rebirthCashMultiplier = data.rebirthCashMultiplier
+	end
+	if data.currentWorld ~= nil then
+		cache.currentWorld = data.currentWorld
+	end
+	if data.settings ~= nil then
+		if data.settings.musicVolume ~= nil then
+			cache.settings.musicVolume = data.settings.musicVolume
+		end
+		if data.settings.sfxVolume ~= nil then
+			cache.settings.sfxVolume = data.settings.sfxVolume
+		end
+		soundController.ApplySettings(cache.settings)
+		if renderSettingsToggles then
+			renderSettingsToggles()
+		end
+	end
+
+	renderHud()
+	renderUpgrades()
+	renderRebirth()
+end
+
+function UIController.Init(initialSnapshot: DataUpdate?)
 	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 	screenGui = playerGui:WaitForChild("ScreenGui") :: ScreenGui
 	rebirthIconButton = screenGui.Buttons.Left.Rebirth
@@ -357,76 +484,18 @@ function UIController.Init()
 	setupSettingsToggles(requestUpdateSettings)
 	startRebirthGlowLoop()
 
-	renderHud()
-	renderUpgrades()
-	renderRebirth()
+	if initialSnapshot then
+		applyDataUpdate(initialSnapshot, true)
+	else
+		renderHud()
+		renderUpgrades()
+		renderRebirth()
+	end
 
 	-- PlayerDataUpdated pushes a diff (�5.2) -- merge whichever fields are
 	-- present rather than assuming a full replace.
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: {
-		cash: number?,
-		upgrades: { [string]: number }?,
-		currentLevel: number?,
-		currentXP: number?,
-		xpForNextLevel: number?,
-		totalLevel: number?,
-		rebirthCount: number?,
-		rebirthPushPowerMultiplier: number?,
-		rebirthCashMultiplier: number?,
-		currentWorld: number?,
-		settings: { musicVolume: number?, sfxVolume: number? }?,
-	})
-		if data.cash ~= nil then
-			cache.cash = data.cash
-		end
-		if data.upgrades ~= nil then
-			cache.upgrades = data.upgrades
-		end
-		if data.currentLevel ~= nil then
-			if data.currentLevel > cache.currentLevel then
-				playLevelUpBurst()
-			end
-			cache.currentLevel = data.currentLevel
-		end
-		if data.currentXP ~= nil then
-			cache.currentXP = data.currentXP
-		end
-		if data.xpForNextLevel ~= nil then
-			cache.xpForNextLevel = data.xpForNextLevel
-		end
-		if data.totalLevel ~= nil then
-			cache.totalLevel = data.totalLevel
-		end
-		if data.rebirthCount ~= nil then
-			cache.rebirthCount = data.rebirthCount
-		end
-		if data.rebirthPushPowerMultiplier ~= nil then
-			cache.rebirthPushPowerMultiplier = data.rebirthPushPowerMultiplier
-		end
-		if data.rebirthCashMultiplier ~= nil then
-			cache.rebirthCashMultiplier = data.rebirthCashMultiplier
-		end
-		if data.currentWorld ~= nil then
-			cache.currentWorld = data.currentWorld
-		end
-		if data.settings ~= nil then
-			if data.settings.musicVolume ~= nil then
-				cache.settings.musicVolume = data.settings.musicVolume
-			end
-			if data.settings.sfxVolume ~= nil then
-				cache.settings.sfxVolume = data.settings.sfxVolume
-			end
-			soundController.ApplySettings(cache.settings)
-			if renderSettingsToggles then
-				renderSettingsToggles()
-			end
-		end
-
-		renderHud()
-		renderUpgrades()
-		renderRebirth()
-	end)
+	playerDataUpdated.OnClientEvent:Connect(applyDataUpdate)
 
 	print("[UIController] Init")
 end

@@ -67,10 +67,13 @@ local function getTrain(player: Player): { TrainItem }
 	return train
 end
 
-local function pushPlayerData(player: Player)
+-- §13 QA: also the RequestPlayerDataSnapshot aggregator's source for this
+-- Service's slice (server/init.server.luau) -- the exact same fields this
+-- Service would otherwise only push reactively, available as a synchronous
+-- pull so the client's first render never has to race that push.
+function EconomyService.GetSnapshot(player: Player): { [string]: any }
 	local data = PlayerDataService.Get(player)
-	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated:FireClient(player, {
+	return {
 		cash = data.cash,
 		trainCount = #getTrain(player),
 		currentLevel = data.currentLevel,
@@ -80,7 +83,12 @@ local function pushPlayerData(player: Player)
 		rebirthCount = data.rebirthCount,
 		rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(data.rebirthCount),
 		rebirthCashMultiplier = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount),
-	})
+	}
+end
+
+local function pushPlayerData(player: Player)
+	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
+	playerDataUpdated:FireClient(player, EconomyService.GetSnapshot(player))
 end
 
 -- Public API consumed by CartSpawnService when a claim finalizes.

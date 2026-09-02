@@ -44,7 +44,8 @@ function WorldService.IsWorldUnlocked(player: Player, worldId: number): boolean
 	return getUnlockedSet(player)[worldId] == true
 end
 
-local function pushWorldData(player: Player)
+-- §13 QA: RequestPlayerDataSnapshot's source for this Service's slice.
+function WorldService.GetSnapshot(player: Player): { [string]: any }
 	local unlocked = getUnlockedSet(player)
 	local list = {}
 	for worldId in unlocked do
@@ -52,11 +53,15 @@ local function pushWorldData(player: Player)
 	end
 	table.sort(list)
 
-	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated:FireClient(player, {
+	return {
 		currentWorld = WorldService.GetCurrentWorld(player),
 		unlockedWorlds = list,
-	})
+	}
+end
+
+local function pushWorldData(player: Player)
+	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
+	playerDataUpdated:FireClient(player, WorldService.GetSnapshot(player))
 end
 
 -- �4.6/�4.7: Total Level crossing a threshold unlocks that World instantly,

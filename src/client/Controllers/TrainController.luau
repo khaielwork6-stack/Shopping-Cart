@@ -446,7 +446,22 @@ local function tryReturnCarts(remotesFolder: Folder, uiAnimationController: any)
 	returnDebounce = false
 end
 
-function TrainController.Init()
+-- PlayerDataUpdated pushes a diff (§5.2), not a full replace -- different
+-- Services push different subsets of fields, so every field is optional.
+-- trainCount is never actually stale at join (in-progress cargo is never
+-- persisted, §4.1.4 -- it's always genuinely 0 for a fresh join), but
+-- currentWorld is real saved state, so this still needs the same initial
+-- pull every other Controller gets (§13 QA).
+local function applyDataUpdate(data: { trainCount: number?, currentWorld: number? })
+	if data.trainCount ~= nil then
+		setTrainCount(data.trainCount)
+	end
+	if data.currentWorld ~= nil then
+		currentWorld = data.currentWorld
+	end
+end
+
+function TrainController.Init(initialSnapshot: { trainCount: number?, currentWorld: number? }?)
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local uiAnimationController = require(script.Parent.UIAnimationController)
 
@@ -456,17 +471,12 @@ function TrainController.Init()
 	rollingWheelsSound.Volume = 0
 	rollingWheelsSound.Parent = player:WaitForChild("PlayerGui")
 
-	-- PlayerDataUpdated pushes a diff (§5.2), not a full replace -- different
-	-- Services push different subsets of fields, so every field is optional.
+	if initialSnapshot then
+		applyDataUpdate(initialSnapshot)
+	end
+
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: { trainCount: number?, currentWorld: number? })
-		if data.trainCount ~= nil then
-			setTrainCount(data.trainCount)
-		end
-		if data.currentWorld ~= nil then
-			currentWorld = data.currentWorld
-		end
-	end)
+	playerDataUpdated.OnClientEvent:Connect(applyDataUpdate)
 
 	local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
 	cartClaimed.OnClientEvent:Connect(function(data: { rarity: string })

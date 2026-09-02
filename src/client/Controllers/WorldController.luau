@@ -79,7 +79,22 @@ local function renderAll()
 	end
 end
 
-function WorldController.Init()
+local function applyDataUpdate(data: { unlockedWorlds: { number }? })
+	if data.unlockedWorlds ~= nil then
+		local set = {}
+		for _, worldId in data.unlockedWorlds do
+			set[worldId] = true
+		end
+		unlockedWorlds = set
+		renderAll()
+	end
+end
+
+-- §13 QA: `initialSnapshot` is RequestPlayerDataSnapshot's one-shot pull at
+-- boot -- see server/init.server.luau's comment on the join-time race this
+-- fixes (unlockedWorlds otherwise only arrives via a push that can fire
+-- before this Controller has connected its listener).
+function WorldController.Init(initialSnapshot: { unlockedWorlds: { number }? }?)
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local requestEnterWorldPortal = remotesFolder:FindFirstChild("RequestEnterWorldPortal") :: RemoteFunction
 
@@ -98,19 +113,14 @@ function WorldController.Init()
 		end
 	end
 
-	renderAll()
+	if initialSnapshot then
+		applyDataUpdate(initialSnapshot)
+	else
+		renderAll()
+	end
 
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: { unlockedWorlds: { number }? })
-		if data.unlockedWorlds ~= nil then
-			local set = {}
-			for _, worldId in data.unlockedWorlds do
-				set[worldId] = true
-			end
-			unlockedWorlds = set
-			renderAll()
-		end
-	end)
+	playerDataUpdated.OnClientEvent:Connect(applyDataUpdate)
 
 	print("[WorldController] Init")
 end

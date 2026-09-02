@@ -63,7 +63,42 @@ local function renderGrid()
 	end
 end
 
-function IndexController.Init()
+type DataUpdate = {
+	indexDiscovered: { string }?,
+	indexPushPowerBonus: number?,
+	luck: number?,
+}
+
+local function applyDataUpdate(data: DataUpdate)
+	local changed = false
+
+	if data.indexDiscovered ~= nil then
+		local set = {}
+		for _, itemId in data.indexDiscovered do
+			set[itemId] = true
+		end
+		discoveredSet = set
+		changed = true
+	end
+	if data.indexPushPowerBonus ~= nil then
+		pushPowerBonus = data.indexPushPowerBonus
+		changed = true
+	end
+	if data.luck ~= nil then
+		luck = data.luck
+		changed = true
+	end
+
+	if changed then
+		renderHeader()
+		renderGrid()
+	end
+end
+
+-- §13 QA: `initialSnapshot` is RequestPlayerDataSnapshot's one-shot pull at
+-- boot -- see server/init.server.luau's comment on the join-time race this
+-- fixes.
+function IndexController.Init(initialSnapshot: DataUpdate?)
 	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 	local screenGui = playerGui:WaitForChild("ScreenGui") :: ScreenGui
 	indexFrame = screenGui.Frames.Index
@@ -72,37 +107,13 @@ function IndexController.Init()
 	renderGrid()
 	renderHeader()
 
+	if initialSnapshot then
+		applyDataUpdate(initialSnapshot)
+	end
+
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: {
-		indexDiscovered: { string }?,
-		indexPushPowerBonus: number?,
-		luck: number?,
-	})
-		local changed = false
-
-		if data.indexDiscovered ~= nil then
-			local set = {}
-			for _, itemId in data.indexDiscovered do
-				set[itemId] = true
-			end
-			discoveredSet = set
-			changed = true
-		end
-		if data.indexPushPowerBonus ~= nil then
-			pushPowerBonus = data.indexPushPowerBonus
-			changed = true
-		end
-		if data.luck ~= nil then
-			luck = data.luck
-			changed = true
-		end
-
-		if changed then
-			renderHeader()
-			renderGrid()
-		end
-	end)
+	playerDataUpdated.OnClientEvent:Connect(applyDataUpdate)
 
 	print("[IndexController] Init")
 end

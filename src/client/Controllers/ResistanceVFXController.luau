@@ -131,30 +131,41 @@ local function playZoneUnlockFanfare(soundName: string)
 	SoundController.PlaySFX(soundName)
 end
 
-function ResistanceVFXController.Init()
+type DataUpdate = {
+	upgrades: { [string]: number }?,
+	currentWorld: number?,
+	rebirthPushPowerMultiplier: number?,
+	indexPushPowerBonus: number?,
+}
+
+local function applyDataUpdate(data: DataUpdate)
+	if data.upgrades and data.upgrades.pushPower ~= nil then
+		cachedPushPowerLevel = data.upgrades.pushPower
+	end
+	if data.currentWorld ~= nil then
+		cachedCurrentWorld = data.currentWorld
+	end
+	if data.rebirthPushPowerMultiplier ~= nil then
+		cachedRebirthPushPowerMultiplier = data.rebirthPushPowerMultiplier
+	end
+	if data.indexPushPowerBonus ~= nil then
+		cachedIndexPushPowerBonus = data.indexPushPowerBonus
+	end
+end
+
+-- §13 QA: `initialSnapshot` is RequestPlayerDataSnapshot's one-shot pull at
+-- boot -- see server/init.server.luau's comment on the join-time race this
+-- fixes.
+function ResistanceVFXController.Init(initialSnapshot: DataUpdate?)
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local uiAnimationController = require(script.Parent.UIAnimationController)
 
+	if initialSnapshot then
+		applyDataUpdate(initialSnapshot)
+	end
+
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated.OnClientEvent:Connect(function(data: {
-		upgrades: { [string]: number }?,
-		currentWorld: number?,
-		rebirthPushPowerMultiplier: number?,
-		indexPushPowerBonus: number?,
-	})
-		if data.upgrades and data.upgrades.pushPower ~= nil then
-			cachedPushPowerLevel = data.upgrades.pushPower
-		end
-		if data.currentWorld ~= nil then
-			cachedCurrentWorld = data.currentWorld
-		end
-		if data.rebirthPushPowerMultiplier ~= nil then
-			cachedRebirthPushPowerMultiplier = data.rebirthPushPowerMultiplier
-		end
-		if data.indexPushPowerBonus ~= nil then
-			cachedIndexPushPowerBonus = data.indexPushPowerBonus
-		end
-	end)
+	playerDataUpdated.OnClientEvent:Connect(applyDataUpdate)
 
 	local zoneUnlocked = remotesFolder:FindFirstChild("ZoneUnlocked") :: RemoteEvent
 	zoneUnlocked.OnClientEvent:Connect(function(data: { world: number, zone: number })

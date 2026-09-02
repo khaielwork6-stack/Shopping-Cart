@@ -44,19 +44,24 @@ function IndexService.GetLuck(player: Player): number
 	return EconomyMath.GetLuckFromDiscoveries(IndexService.GetDiscoveredCount(player))
 end
 
-local function pushIndexData(player: Player)
+-- §13 QA: RequestPlayerDataSnapshot's source for this Service's slice.
+function IndexService.GetSnapshot(player: Player): { [string]: any }
 	local set = getDiscoveredSet(player)
 	local list = {}
 	for itemId in set do
 		table.insert(list, itemId)
 	end
 
-	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated:FireClient(player, {
+	return {
 		indexDiscovered = list,
 		indexPushPowerBonus = IndexService.GetPushPowerBonus(player),
 		luck = IndexService.GetLuck(player),
-	})
+	}
+end
+
+local function pushIndexData(player: Player)
+	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
+	playerDataUpdated:FireClient(player, IndexService.GetSnapshot(player))
 end
 
 -- �4.6: "the first time a given itemId is found, flip indexDiscovered[itemId]

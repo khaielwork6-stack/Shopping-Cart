@@ -43,7 +43,7 @@ local SoundConfig: { [SoundName]: string } = {
 	PersonalBest = "rbxassetid://136182414783063",
 	Jump = "rbxassetid://109397400639910",
 	HoverButton = "rbxassetid://136108770017536",
-	BackgroundMusic = "rbxassetid://138465914285393",
+	BackgroundMusic = "rbxassetid://71944799412694",
 }
 
 return SoundConfig

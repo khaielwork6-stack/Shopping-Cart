@@ -59,9 +59,14 @@ local function getBag(player: Player): { BagEntry }
 	return PlayerDataService.Get(player).lootBag
 end
 
+-- §13 QA: RequestPlayerDataSnapshot's source for this Service's slice.
+function LootService.GetSnapshot(player: Player): { [string]: any }
+	return { lootBag = getBag(player) }
+end
+
 local function pushBagData(player: Player)
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
-	playerDataUpdated:FireClient(player, { lootBag = getBag(player) })
+	playerDataUpdated:FireClient(player, LootService.GetSnapshot(player))
 end
 
 -- �4.5: Bag entries stack identical items -- a slot is a unique

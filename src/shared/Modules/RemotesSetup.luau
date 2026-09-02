@@ -18,6 +18,11 @@ local REMOTES: { [string]: RemoteKind } = {
 	RequestEnterWorldPortal = "RemoteFunction",
 	RequestUpdateSettings = "RemoteFunction",
 
+	-- §13 QA: one-shot pull the client fires at boot, before any Controller
+	-- renders anything -- see server/init.server.luau's own comment on the
+	-- join-time race this fixes.
+	RequestPlayerDataSnapshot = "RemoteFunction",
+
 	-- server -> client, RemoteEvent (past-tense-noun-named per �5.7)
 	CartClaimed = "RemoteEvent",
 	PlayerDataUpdated = "RemoteEvent",
