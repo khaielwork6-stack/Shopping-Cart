@@ -25,16 +25,18 @@ function ZoneData.GetSpawnPointsTag(worldId: number, zoneIndex: number): string
 	return string.format("World%dZone%dSpawnPoints", worldId, zoneIndex)
 end
 
--- Each World's Zones are laid out linearly along +Z, each a 300-stud band,
--- Zone N centered at Z = 300*(N-1) (Zone 1 centered on the existing spawn
--- origin at Z=0) -- tripled from the original 100-stud band per §13's map
--- resize pass (every zone 3x larger). This is Studio level-layout data, not
--- an economy formula -- purely for the client's cosmetic "which Zone am I
--- standing in" check (�4.2's resistance VFX). Nothing reward-bearing
--- depends on this: claim eligibility is gated per-cart by the Zone it
--- actually spawned in, and the Corral return's SpeedFactor uses the
--- highest Zone among the cargo itself.
-local ZONE_BAND_SIZE = 300
+-- Each World's Zones are laid out linearly along +Z, each a 450-stud band,
+-- Zone N centered at Z = 450*(N-1) (Zone 1 centered on the existing spawn
+-- origin at Z=0) -- every World was normalized to this same common zone
+-- length (previously 300, before that 100) per §13's second map-resize
+-- pass, so this single constant covers all 5 Worlds even though they now
+-- have different widths. This is Studio level-layout data, not an economy
+-- formula -- purely for the client's cosmetic "which Zone am I standing
+-- in" check (�4.2's resistance VFX). Nothing reward-bearing depends on
+-- this: claim eligibility is gated per-cart by the Zone it actually
+-- spawned in, and the Corral return's SpeedFactor uses the highest Zone
+-- among the cargo itself.
+local ZONE_BAND_SIZE = 450
 
 function ZoneData.GetZoneIndexFromWorldZ(worldZ: number, zoneCount: number): number
 	local index = math.round(worldZ / ZONE_BAND_SIZE) + 1
