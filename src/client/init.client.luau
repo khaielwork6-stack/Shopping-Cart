@@ -20,6 +20,7 @@ local BOOT_ORDER = {
 	{ Name = "LootController", Module = script.Controllers.LootController },
 	{ Name = "IndexController", Module = script.Controllers.IndexController },
 	{ Name = "MonetizationController", Module = script.Controllers.MonetizationController },
+	{ Name = "ShopController", Module = script.Controllers.ShopController },
 }
 
 print("[Client Main] Booting controllers...")
