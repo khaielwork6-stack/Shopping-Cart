@@ -91,13 +91,27 @@ function WorldService.CheckWorldUnlocks(player: Player)
 end
 
 -- Shared by the Portal handler and every character spawn (§13 QA below) --
--- the one place that actually moves a character into a World's physical
--- Zone 1, so both paths can never drift out of sync with each other.
+-- the one place that actually moves a character into a World, so both
+-- paths can never drift out of sync with each other.
+--
+-- §13: every World now has a dedicated Lobby before Zone 1 (no cart
+-- spawns there) -- a player must always land in the Lobby, never straight
+-- into Zone 1's gameplay, whether that's their first join, a respawn, or a
+-- fresh Portal arrival. Falls back to Zone 1's own spawn anchor only if a
+-- World is somehow missing its Lobby (should never happen post-§13, but a
+-- missing Lobby shouldn't strand a player with no spawn at all).
 local function teleportToWorldZone1(character: Model, worldId: number)
 	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local worldEntry = WorldData.GetWorld(worldId)
 	local worldFolder = worldEntry and Workspace.Worlds:FindFirstChild(worldEntry.FolderName)
-	if root and worldFolder then
+	if not (root and worldFolder) then
+		return
+	end
+
+	local lobbySpawn = worldFolder:FindFirstChild("Lobby") and worldFolder.Lobby:FindFirstChild("LobbySpawnAnchor")
+	if lobbySpawn then
+		root.CFrame = (lobbySpawn :: BasePart).CFrame + Vector3.new(0, 4, 0)
+	else
 		local anchor = worldFolder.Zones.Zone1.ZoneSpawnPoints.SpawnPointAnchor :: BasePart
 		root.CFrame = anchor.CFrame + Vector3.new(0, 4, -30) -- just ahead of Zone 1's spawn cluster
 	end
