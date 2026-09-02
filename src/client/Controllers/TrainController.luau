@@ -22,13 +22,64 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local FormatNumber = require(ReplicatedStorage.Shared.Modules.FormatNumber)
+local CartAssembly = require(ReplicatedStorage.Shared.Modules.CartAssembly)
 
 local TrainController = {}
 
 local SPACING = 3 -- studs between train carts (§4.1.3)
 local TRAIL_SAMPLE_DISTANCE = 0.5
-local LERP_ALPHA = 0.35
 local MAX_TRAIL_POINTS = 400
+
+-- Cart-model test (see chat): CartBody_Golden's own local axes, as exported,
+-- are +X = front (logo panel)/back = handle (-X), +Z/-Z = left/right width,
+-- +Y = up -- established by screenshotting the body from each side in Edit
+-- mode, not assumed. WheelModel_Industrial's identity rotation already
+-- faces the right way for mounting (its axle is local Z, confirmed the same
+-- way: an identity-rotated wheel viewed along world Z showed its full round
+-- face -- see the wheel-orientation comparison test), so no wheelRotation
+-- correction is needed, unlike a differently-exported wheel might.
+--
+-- Offsets are measured from CartBody_Golden's own bounding box (half-size
+-- ~3.96 x 3.43 x 2.85 studs) and adjusted to sit under the visible leg
+-- struts rather than at the raw bounding-box corners.
+local CART_BODY_TEMPLATE = ReplicatedStorage.Assets.Placeholders:WaitForChild("CartBody_Golden") :: Model
+local CART_WHEEL_TEMPLATE = ReplicatedStorage.Assets.Placeholders:WaitForChild("WheelModel_Industrial") :: Model
+local CART_WHEEL_OFFSETS: { CartAssembly.WheelOffset } = {
+	{ x = 3.0, z = 2.1 }, -- front-left
+	{ x = 3.0, z = -2.1 }, -- front-right
+	{ x = -3.2, z = 2.1 }, -- back-left
+	{ x = -3.2, z = -2.1 }, -- back-right
+}
+local WHEEL_CENTER_Y = -2.882 -- body-local Y so the wheel's bottom just touches the ground
+local WHEEL_RADIUS = 0.552
+
+-- The trail is recorded straight from HumanoidRootPart CFrames, whose
+-- forward (LookVector) is local -Z by Roblox's own character-rig
+-- convention. The cart body's forward is local +X (see above), so every
+-- trail sample needs this fixed remap before it's a valid body CFrame --
+-- confirmed empirically in Play mode (see chat), not just derived on paper.
+local BODY_FORWARD_ROTATION = CFrame.Angles(0, math.rad(90), 0)
+
+-- Smooth, framerate-independent follow (replaces the old fixed Lerp alpha,
+-- which visibly changed speed with frame rate and read as "snappy" at high
+-- FPS) -- higher = catches up to the trail faster, lower = looser/laggier.
+local FOLLOW_SMOOTHING_RATE = 9
+
+-- Subtle rolling bob/sway (§8's "small and tasteful", not "bouncing around
+-- like a toy"): a tiny sine wave keyed to distance actually traveled, not
+-- elapsed time, so a stationary cart never bobs in place.
+local BOB_AMPLITUDE = 0.05
+local BOB_FREQUENCY = 1.35 -- radians per stud traveled
+
+-- Slight lean into turns, derived from how fast the cart's own heading is
+-- changing frame to frame -- capped low so it reads as "natural roll," not
+-- a toy tipping over. The raw per-frame turn rate is itself clamped before
+-- the response multiplier is applied, so a single very-fast direction
+-- change (a sharp real turn, or a teleport-like snap) can't spike the lean
+-- past its cap even for one frame.
+local LEAN_MAX = math.rad(3)
+local LEAN_RESPONSE = 0.35
+local MAX_TURN_RATE = 6 -- radians/second, clamps the input before LEAN_RESPONSE scales it
 
 local COLLECT_POP_SCALE_START = 0.85
 local COLLECT_POP_INFO = TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -42,9 +93,15 @@ local LEGENDARY_NUDGE_INFO = TweenInfo.new(0.07, Enum.EasingStyle.Sine, Enum.Eas
 
 local player = Players.LocalPlayer
 
+type VisualCart = {
+	assembly: CartAssembly.Assembly,
+	spinAngle: number,
+	distanceTraveled: number,
+	lastForward: Vector3?,
+}
+
 local trailPoints: { CFrame } = {}
-local visualCarts: { Model } = {}
-local cartTemplate: Model
+local visualCarts: { VisualCart } = {}
 local returnDebounce = false
 local rollingWheelsSound: Sound
 local currentWorld = 1
@@ -101,8 +158,8 @@ end
 
 -- §8 "Cart collection": scales up then snaps into train position over
 -- ~0.15s -- the position snap itself is already handled by onHeartbeat's
--- Lerp toward the trail; this just adds the pop-in scale on the model
--- freshly cloned this frame.
+-- smoothed follow toward the trail; this just adds the pop-in scale on the
+-- assembly freshly built this frame.
 local function playCollectPop(cart: Model)
 	local ok = pcall(function()
 		cart.Scale = COLLECT_POP_SCALE_START
@@ -112,23 +169,32 @@ local function playCollectPop(cart: Model)
 	end
 end
 
+local function createVisualCart(): VisualCart
+	local assembly = CartAssembly.BuildCart(CART_BODY_TEMPLATE, CART_WHEEL_TEMPLATE, CART_WHEEL_OFFSETS, WHEEL_CENTER_Y)
+	assembly.model.Parent = Workspace
+	playCollectPop(assembly.model)
+	return { assembly = assembly, spinAngle = 0, distanceTraveled = 0, lastForward = nil }
+end
+
 local function setTrainCount(count: number)
 	while #visualCarts < count do
-		local clone = cartTemplate:Clone()
-		clone.Parent = Workspace
-		table.insert(visualCarts, clone)
-		playCollectPop(clone)
+		table.insert(visualCarts, createVisualCart())
 	end
 	while #visualCarts > count do
 		local cart = table.remove(visualCarts)
 		if cart then
-			cart:Destroy()
+			CartAssembly.Destroy(cart.assembly)
 		end
 	end
 	updateRollingWheels(count)
 end
 
-local function onHeartbeat()
+-- Framerate-independent smoothing + procedural bob/lean/wheel-spin, all
+-- driven by the same "how far did the body actually move this frame" value
+-- so a stationary train never bobs or spins in place. Runs once per cart
+-- per frame -- no per-wheel work outside CartAssembly.UpdateAssembly's own
+-- single CFrame write per wheel (§11.5's VFX/perf budget).
+local function onHeartbeat(dt: number)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not root then
@@ -137,11 +203,35 @@ local function onHeartbeat()
 
 	updateTrail(root.CFrame)
 
-	for i, cartModel in visualCarts do
+	local followAlpha = 1 - math.exp(-FOLLOW_SMOOTHING_RATE * dt)
+
+	for i, visualCart in visualCarts do
 		local target = getTrailCFrameAtDistance(i * SPACING)
-		if target then
-			cartModel:PivotTo(cartModel:GetPivot():Lerp(target, LERP_ALPHA))
+		if not target then
+			continue
 		end
+
+		local orientedTarget = target * BODY_FORWARD_ROTATION
+		local currentCFrame = visualCart.assembly.body.CFrame
+		local smoothedCFrame = currentCFrame:Lerp(orientedTarget, followAlpha)
+
+		local moved = (smoothedCFrame.Position - currentCFrame.Position).Magnitude
+		visualCart.distanceTraveled += moved
+		visualCart.spinAngle -= moved / WHEEL_RADIUS
+
+		local lean = 0
+		local newForward = smoothedCFrame.LookVector
+		if visualCart.lastForward and dt > 0 then
+			local rawTurnRate = visualCart.lastForward:Cross(newForward).Y / dt
+			local clampedTurnRate = math.clamp(rawTurnRate, -MAX_TURN_RATE, MAX_TURN_RATE)
+			lean = math.clamp(clampedTurnRate * LEAN_RESPONSE, -LEAN_MAX, LEAN_MAX)
+		end
+		visualCart.lastForward = newForward
+
+		local bob = math.sin(visualCart.distanceTraveled * BOB_FREQUENCY) * BOB_AMPLITUDE
+		local finalCFrame = smoothedCFrame * CFrame.new(0, bob, 0) * CFrame.Angles(lean, 0, 0)
+
+		CartAssembly.UpdateAssembly(visualCart.assembly, finalCFrame, visualCart.spinAngle)
 	end
 end
 
@@ -341,7 +431,6 @@ end
 function TrainController.Init()
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local uiAnimationController = require(script.Parent.UIAnimationController)
-	cartTemplate = ReplicatedStorage.Assets.Placeholders.PH_Cart_Common
 
 	rollingWheelsSound = Instance.new("Sound")
 	rollingWheelsSound.Name = "PH_SFX_TrainRoll"
