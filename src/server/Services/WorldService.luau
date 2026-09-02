@@ -90,6 +90,19 @@ function WorldService.CheckWorldUnlocks(player: Player)
 	end
 end
 
+-- Shared by the Portal handler and every character spawn (§13 QA below) --
+-- the one place that actually moves a character into a World's physical
+-- Zone 1, so both paths can never drift out of sync with each other.
+local function teleportToWorldZone1(character: Model, worldId: number)
+	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local worldEntry = WorldData.GetWorld(worldId)
+	local worldFolder = worldEntry and Workspace.Worlds:FindFirstChild(worldEntry.FolderName)
+	if root and worldFolder then
+		local anchor = worldFolder.Zones.Zone1.ZoneSpawnPoints.SpawnPointAnchor :: BasePart
+		root.CFrame = anchor.CFrame + Vector3.new(0, 4, -30) -- just ahead of Zone 1's spawn cluster
+	end
+end
+
 -- Server-side "is the player inside this World's Zone 8 Portal trigger"
 -- check would live here too, but per �9.4 the portal is a confirm-then-
 -- teleport RemoteFunction, not a physical trigger volume -- the client
@@ -113,11 +126,8 @@ local function handleRequestEnterWorldPortal(player: Player, destinationWorldId:
 	PlayerDataService.Get(player).currentWorld = destinationWorldId
 
 	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local worldFolder = Workspace.Worlds:FindFirstChild(destination.FolderName)
-	if root and worldFolder then
-		local anchor = worldFolder.Zones.Zone1.ZoneSpawnPoints.SpawnPointAnchor :: BasePart
-		root.CFrame = anchor.CFrame + Vector3.new(0, 4, -30) -- just ahead of Zone 1's spawn cluster
+	if character then
+		teleportToWorldZone1(character, destinationWorldId)
 	end
 
 	pushWorldData(player)
@@ -136,6 +146,22 @@ function WorldService.Init()
 	Players.PlayerAdded:Connect(function(player: Player)
 		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushWorldData(player)
+
+		-- §13 QA: real bug -- only the Portal handler ever physically moved a
+		-- character to match currentWorld. Roblox's generic SpawnLocation
+		-- (or a plain respawn) always drops a character in World1's physical
+		-- space regardless of what World the player's save says they're in,
+		-- so any player who was last in World 2-5 when they disconnected
+		-- would rejoin standing in World1 while every server-side check
+		-- (claim eligibility, Corral, Sell NPC) still used their persisted
+		-- currentWorld -- carts they could see and walk into would just
+		-- never claim, with no error, since heartbeatCheck was comparing
+		-- their real position against the WRONG World's spawn points
+		-- entirely. Fixed by re-teleporting on every spawn (initial join and
+		-- every respawn after death), not just an explicit Portal use.
+		player.CharacterAdded:Connect(function(character: Model)
+			teleportToWorldZone1(character, WorldService.GetCurrentWorld(player))
+		end)
 	end)
 
 	print("[WorldService] Init")
