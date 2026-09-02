@@ -159,6 +159,18 @@ function WorldService.Init()
 		-- their real position against the WRONG World's spawn points
 		-- entirely. Fixed by re-teleporting on every spawn (initial join and
 		-- every respawn after death), not just an explicit Portal use.
+		--
+		-- That alone wasn't enough, though (confirmed live): Roblox often
+		-- spawns the character before this async WaitForLoad resolves, so a
+		-- CharacterAdded connected only here would silently miss that very
+		-- first spawn's event entirely, leaving a non-World1 player standing
+		-- wherever Roblox's generic SpawnLocation put them -- physically in
+		-- World1 -- until their *next* respawn or Portal use. Handle the
+		-- character that may already exist too, in addition to (not instead
+		-- of) every future spawn.
+		if player.Character then
+			teleportToWorldZone1(player.Character, WorldService.GetCurrentWorld(player))
+		end
 		player.CharacterAdded:Connect(function(character: Model)
 			teleportToWorldZone1(character, WorldService.GetCurrentWorld(player))
 		end)

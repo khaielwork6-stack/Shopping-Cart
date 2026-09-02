@@ -136,6 +136,17 @@ function UpgradeService.Init()
 	Players.PlayerAdded:Connect(function(player: Player)
 		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushUpgradeData(player)
+
+		-- §13 QA: real bug -- Roblox often spawns the character before this
+		-- async WaitForLoad resolves, so a CharacterAdded connected only
+		-- here would silently miss that very first spawn's event entirely.
+		-- WalkSpeed stayed at Roblox's default (16) regardless of Mobility
+		-- level until some *later* purchase happened to re-apply it. Handle
+		-- the character that may already exist, in addition to (not instead
+		-- of) every future spawn.
+		if player.Character then
+			applyMobilityEffect(player)
+		end
 		player.CharacterAdded:Connect(function()
 			applyMobilityEffect(player)
 		end)
