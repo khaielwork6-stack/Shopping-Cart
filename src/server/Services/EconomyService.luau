@@ -30,6 +30,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
@@ -227,6 +228,10 @@ local function getReturnSpeedFactor(player: Player, train: { TrainItem }): numbe
 end
 
 local function handleRequestReturnCarts(player: Player)
+	if not RateLimiter.Allow(player, "RequestReturnCarts", 5) then
+		return { success = false, reason = "RateLimited" }
+	end
+
 	if isReturning[player] then
 		return { success = false, reason = "AlreadyReturning" }
 	end

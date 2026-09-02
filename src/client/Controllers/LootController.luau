@@ -92,16 +92,19 @@ local function renderSellButton()
 end
 
 -- §8 "NPC interaction feedback": a short idle "gesture" on trigger. The
--- placeholder NPC isn't guaranteed to have a rigged animation, so this uses
--- a rig-agnostic Model.Scale bounce instead of an AnimationTrack.
+-- placeholder NPC has no rigged Humanoid to animate (confirmed via live
+-- inspection, §13 QA), and Model.Scale isn't a settable property on this
+-- Roblox version (same finding as the cart pop-in bug -- see CartVisuals) --
+-- so this bounces the PrimaryPart's own Size instead, mirroring that fix.
 local NPC_GESTURE_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local function playNPCGesture(npc: Model)
-	local ok = pcall(function()
-		npc.Scale = 1.08
-	end)
-	if ok then
-		TweenService:Create(npc, NPC_GESTURE_INFO, { Scale = 1 }):Play()
+	local primaryPart = npc.PrimaryPart
+	if not primaryPart then
+		return
 	end
+	local baseSize = primaryPart.Size
+	primaryPart.Size = baseSize * 1.08
+	TweenService:Create(primaryPart, NPC_GESTURE_INFO, { Size = baseSize }):Play()
 end
 
 local function connectSellNPCs(requestSellLoot: RemoteFunction)

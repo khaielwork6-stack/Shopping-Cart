@@ -17,6 +17,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local WorldService = {}
@@ -91,6 +92,10 @@ end
 -- and this handler re-validates everything that matters (unlock state)
 -- server-side regardless of what the client claims.
 local function handleRequestEnterWorldPortal(player: Player, destinationWorldId: number)
+	if not RateLimiter.Allow(player, "RequestEnterWorldPortal", 5) then
+		return { success = false, reason = "RateLimited" }
+	end
+
 	if not WorldService.IsWorldUnlocked(player, destinationWorldId) then
 		return { success = false, reason = "WorldLocked" }
 	end

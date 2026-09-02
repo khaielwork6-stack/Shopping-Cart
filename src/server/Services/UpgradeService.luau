@@ -23,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local MonetizationService = require(script.Parent.MonetizationService)
 
@@ -82,6 +83,10 @@ function UpgradeService.ResetPushPower(player: Player)
 end
 
 local function handleRequestPurchaseUpgrade(player: Player, statName: string, quantity: number?)
+	if not RateLimiter.Allow(player, "RequestPurchaseUpgrade", 20) then
+		return { success = false, reason = "RateLimited" }
+	end
+
 	if not table.find(STAT_NAMES, statName) then
 		return { success = false, reason = "InvalidStat" }
 	end

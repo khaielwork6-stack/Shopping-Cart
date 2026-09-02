@@ -25,6 +25,7 @@ local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local WorldService = require(script.Parent.WorldService)
 local IndexService = require(script.Parent.IndexService)
@@ -173,6 +174,10 @@ local function sellBag(player: Player, useX2: boolean?): { success: boolean, rea
 end
 
 local function handleRequestSellLoot(player: Player, useX2: boolean?)
+	if not RateLimiter.Allow(player, "RequestSellLoot", 10) then
+		return { success = false, reason = "RateLimited" }
+	end
+
 	if not isPlayerAtSellNPC(player) then
 		return { success = false, reason = "NotAtNPC" }
 	end
@@ -185,6 +190,10 @@ function LootService.SellAll(player: Player)
 end
 
 local function handleRequestOpenSealedItem(player: Player, itemId: string)
+	if not RateLimiter.Allow(player, "RequestOpenSealedItem", 20) then
+		return { success = false, reason = "RateLimited" }
+	end
+
 	local bag = getBag(player)
 
 	for i, entry in bag do

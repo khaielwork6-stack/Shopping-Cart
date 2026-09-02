@@ -33,6 +33,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
 local Migrations = require(script.Parent.Parent.Migrations)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 
 export type UpgradeLevels = {
 	capacity: number,
@@ -423,6 +424,8 @@ local function startAutosaveLoop(player: Player)
 end
 
 local function onPlayerRemoving(player: Player)
+	RateLimiter.ClearPlayer(player)
+
 	local thread = autosaveThreads[player]
 	if thread then
 		task.cancel(thread)
@@ -456,6 +459,10 @@ function PlayerDataService.Init()
 	local remotesFolder = RemotesSetup.CreateAll()
 	local requestUpdateSettings = remotesFolder:FindFirstChild("RequestUpdateSettings") :: RemoteFunction
 	requestUpdateSettings.OnServerInvoke = function(player: Player, musicVolume: number?, sfxVolume: number?)
+		if not RateLimiter.Allow(player, "RequestUpdateSettings", 10) then
+			return { success = false, reason = "RateLimited" }
+		end
+
 		local data = PlayerDataService.Get(player)
 		if type(musicVolume) == "number" then
 			data.settings.musicVolume = math.clamp(musicVolume, 0, 1)

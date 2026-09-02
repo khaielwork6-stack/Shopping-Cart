@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
+local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local EconomyService = require(script.Parent.EconomyService)
 local UpgradeService = require(script.Parent.UpgradeService)
 
@@ -36,6 +37,10 @@ end
 -- yield between them, so there is no window a client could interleave
 -- another action into.
 local function handleRequestRebirth(player: Player)
+	if not RateLimiter.Allow(player, "RequestRebirth", 5) then
+		return { success = false, reason = "RateLimited" }
+	end
+
 	if not RebirthService.CanRebirth(player) then
 		return { success = false, reason = "RequirementNotMet" }
 	end
