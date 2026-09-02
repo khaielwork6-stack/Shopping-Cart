@@ -281,12 +281,22 @@ local function handleRequestReturnCarts(player: Player)
 	data.cash += total
 	data.lifetimeStats.totalCashEarned += total
 	data.lifetimeStats.totalCartsReturned += cartsReturned
+	local isPersonalBest = total > data.lifetimeStats.bestSingleReturn
+	if isPersonalBest then
+		data.lifetimeStats.bestSingleReturn = total
+	end
 	table.clear(train)
 	awardXPAndLevelUp(data, xpEarned)
 	isReturning[player] = nil
 	pushPlayerData(player)
 
-	return { success = true, cashEarned = total, newCash = data.cash, xpEarned = xpEarned }
+	return {
+		success = true,
+		cashEarned = total,
+		newCash = data.cash,
+		xpEarned = xpEarned,
+		isPersonalBest = isPersonalBest,
+	}
 end
 
 function EconomyService.Init()

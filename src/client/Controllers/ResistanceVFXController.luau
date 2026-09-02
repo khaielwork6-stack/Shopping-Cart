@@ -37,6 +37,7 @@ local cachedRebirthPushPowerMultiplier = 1
 local cachedIndexPushPowerBonus = 1
 local dragEmitter: ParticleEmitter?
 local zoneUnlockSound: Sound?
+local worldUnlockSound: Sound?
 
 local function ensureDragEmitter(root: BasePart)
 	if dragEmitter and dragEmitter.Parent then
@@ -100,7 +101,7 @@ local function onHeartbeat()
 	applyResistanceVFX(root, speedFactor)
 end
 
-local function playZoneUnlockFanfare()
+local function playZoneUnlockFanfare(sound: Sound?)
 	local worldEntry = WorldData.GetWorld(cachedCurrentWorld)
 	local worldFolder = worldEntry and Workspace:FindFirstChild("Worlds") and Workspace.Worlds:FindFirstChild(worldEntry.FolderName)
 	local corral = worldFolder and worldFolder:FindFirstChild("Corral") :: BasePart?
@@ -125,8 +126,8 @@ local function playZoneUnlockFanfare()
 	emitter:Emit(30)
 	Debris:AddItem(attachment, 2)
 
-	if zoneUnlockSound then
-		zoneUnlockSound:Play()
+	if sound then
+		sound:Play()
 	end
 end
 
@@ -134,12 +135,17 @@ function ResistanceVFXController.Init()
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local uiAnimationController = require(script.Parent.UIAnimationController)
 
-	-- PH_SFX_ZoneUnlock (�7): no SoundId set yet -- a future art pass fills
-	-- this in; :Play() is already correctly wired.
-	local sound = Instance.new("Sound")
-	sound.Name = "PH_SFX_ZoneUnlock"
-	sound.Parent = player:WaitForChild("PlayerGui")
-	zoneUnlockSound = sound
+	-- PH_SFX_ZoneUnlock / PH_SFX_WorldUnlock (�7): no SoundId set yet -- a
+	-- future art pass fills these in; :Play() is already correctly wired.
+	local zoneSound = Instance.new("Sound")
+	zoneSound.Name = "PH_SFX_ZoneUnlock"
+	zoneSound.Parent = player:WaitForChild("PlayerGui")
+	zoneUnlockSound = zoneSound
+
+	local worldSound = Instance.new("Sound")
+	worldSound.Name = "PH_SFX_WorldUnlock"
+	worldSound.Parent = player:WaitForChild("PlayerGui")
+	worldUnlockSound = worldSound
 
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
 	playerDataUpdated.OnClientEvent:Connect(function(data: {
@@ -163,17 +169,18 @@ function ResistanceVFXController.Init()
 	end)
 
 	local zoneUnlocked = remotesFolder:FindFirstChild("ZoneUnlocked") :: RemoteEvent
-	zoneUnlocked.OnClientEvent:Connect(function()
-		playZoneUnlockFanfare()
-		uiAnimationController.ShowNotification("ZoneUnlocked")
+	zoneUnlocked.OnClientEvent:Connect(function(data: { world: number, zone: number })
+		playZoneUnlockFanfare(zoneUnlockSound)
+		uiAnimationController.ShowNotification("ZoneUnlocked", "Zone " .. data.zone .. " unlocked!")
 	end)
 
-	-- �4.7/�8 World unlock sequence: reuse the same Corral-burst fanfare --
-	-- the Guide's full "portal visibly activates" beat is Phase 10 polish.
+	-- §4.7/§8 World unlock sequence: reuses the same Corral-burst fanfare, but
+	-- with its own SFX and a banner that names the actual new World per §8's
+	-- requirement, not a generic message.
 	local worldUnlocked = remotesFolder:FindFirstChild("WorldUnlocked") :: RemoteEvent
-	worldUnlocked.OnClientEvent:Connect(function()
-		playZoneUnlockFanfare()
-		uiAnimationController.ShowNotification("ZoneUnlocked")
+	worldUnlocked.OnClientEvent:Connect(function(data: { worldId: number, worldName: string })
+		playZoneUnlockFanfare(worldUnlockSound)
+		uiAnimationController.ShowNotification("ZoneUnlocked", data.worldName .. " unlocked!")
 	end)
 
 	RunService.Heartbeat:Connect(onHeartbeat)

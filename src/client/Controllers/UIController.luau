@@ -13,6 +13,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
@@ -144,6 +145,97 @@ local function startRebirthGlowLoop()
 	end)
 end
 
+-- §8 "Level-up": a brief radial burst at the player's feet + a chime + the
+-- HUD Level number punching up in scale once.
+local function playLevelUpBurst()
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if root then
+		local attachment = Instance.new("Attachment")
+		attachment.Position = Vector3.new(0, -3, 0)
+		attachment.Parent = root
+
+		local emitter = Instance.new("ParticleEmitter")
+		emitter.Color = ColorSequence.new(Color3.fromRGB(255, 255, 150))
+		emitter.Lifetime = NumberRange.new(0.5, 0.7)
+		emitter.Speed = NumberRange.new(8, 14)
+		emitter.SpreadAngle = Vector2.new(180, 0)
+		emitter.Size = NumberSequence.new(0.5)
+		emitter.Rate = 0
+		emitter.Parent = attachment
+
+		emitter:Emit(24)
+		Debris:AddItem(attachment, 1)
+	end
+
+	local sound = Instance.new("Sound")
+	sound.Name = "PH_SFX_LevelUp"
+	sound.Parent = player:WaitForChild("PlayerGui")
+	sound:Play()
+	Debris:AddItem(sound, 2)
+
+	local levelLabel = screenGui.ProgressBar.Frame.LEVEL :: TextLabel
+	local uiScale = levelLabel:FindFirstChildOfClass("UIScale")
+	if not uiScale then
+		uiScale = Instance.new("UIScale")
+		uiScale.Parent = levelLabel
+	end
+	uiScale.Scale = 1.4
+	TweenService:Create(uiScale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+end
+
+-- §4.4/§8: the ~2-3s Rebirth ceremony -- camera pulls back (via FieldOfView,
+-- so it never fights the built-in camera controller's CFrame ownership), a
+-- light-burst VFX at the player, and a chime, all before the
+-- RebirthComplete toast reveals the new multipliers. The reset itself has
+-- already resolved server-side by the time this plays; this is purely the
+-- ceremony §4.4 asks for layered on top.
+local REBIRTH_CINEMATIC_DURATION = 2.2
+local function playRebirthCinematic()
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return
+	end
+	local originalFOV = camera.FieldOfView
+
+	TweenService:Create(
+		camera,
+		TweenInfo.new(REBIRTH_CINEMATIC_DURATION * 0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ FieldOfView = originalFOV + 15 }
+	):Play()
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if root then
+		local attachment = Instance.new("Attachment")
+		attachment.Parent = root
+
+		local emitter = Instance.new("ParticleEmitter")
+		emitter.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+		emitter.Lifetime = NumberRange.new(0.6, 1.0)
+		emitter.Speed = NumberRange.new(6, 14)
+		emitter.SpreadAngle = Vector2.new(180, 180)
+		emitter.Size = NumberSequence.new(0.6)
+		emitter.Rate = 0
+		emitter.Parent = attachment
+
+		emitter:Emit(50)
+		Debris:AddItem(attachment, 2)
+	end
+
+	local sound = Instance.new("Sound")
+	sound.Name = "PH_SFX_Rebirth"
+	sound.Parent = player:WaitForChild("PlayerGui")
+	sound:Play()
+	Debris:AddItem(sound, 3)
+
+	task.wait(REBIRTH_CINEMATIC_DURATION)
+
+	TweenService:Create(camera, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		FieldOfView = originalFOV,
+	}):Play()
+end
+
 local function setupHomeButton()
 	local homeButton = screenGui.Top.Home
 	homeButton.MouseButton1Click:Connect(function()
@@ -160,13 +252,27 @@ local function setupHomeButton()
 	end)
 end
 
+-- §8 "Upgrade purchase": a short SFX on every successful buy, alongside the
+-- button's own micro-bounce/ripple (already handled generically by
+-- UIAnimationController for every GuiButton).
+local function playPurchaseSFX()
+	local sound = Instance.new("Sound")
+	sound.Name = "PH_SFX_Purchase"
+	sound.Parent = player:WaitForChild("PlayerGui")
+	sound:Play()
+	Debris:AddItem(sound, 2)
+end
+
 local function setupUpgradeButtons(requestPurchaseUpgrade: RemoteFunction)
 	local grid = screenGui.Frames.Upgrades.ScrollingFrame.Upgrades
 	for _, stat in STAT_ORDER do
 		local card = grid:FindFirstChild(stat)
 		if card then
 			card.Frame.Choose.Money.MouseButton1Click:Connect(function()
-				requestPurchaseUpgrade:InvokeServer(stat, 1)
+				local result = requestPurchaseUpgrade:InvokeServer(stat, 1) :: { success: boolean? }
+				if result and result.success then
+					playPurchaseSFX()
+				end
 			end)
 		end
 	end
@@ -177,6 +283,7 @@ local function setupRebirthButton(requestRebirth: RemoteFunction)
 	inner.Buttons.Money.MouseButton1Click:Connect(function()
 		local result = requestRebirth:InvokeServer() :: { success: boolean }
 		if result and result.success then
+			playRebirthCinematic()
 			uiAnimationController.ShowNotification("RebirthComplete")
 		end
 	end)
@@ -263,6 +370,9 @@ function UIController.Init()
 			cache.upgrades = data.upgrades
 		end
 		if data.currentLevel ~= nil then
+			if data.currentLevel > cache.currentLevel then
+				playLevelUpBurst()
+			end
 			cache.currentLevel = data.currentLevel
 		end
 		if data.currentXP ~= nil then

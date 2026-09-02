@@ -58,6 +58,7 @@ export type LifetimeStats = {
 	totalCashEarned: number,
 	totalCartsReturned: number,
 	totalRebirths: number,
+	bestSingleReturn: number, -- Phase 10 (§8): drives the cash-popup "personal best" gold tint
 }
 
 export type PlayerDataSchema = {
@@ -100,7 +101,7 @@ local DEFAULT_PLAYER_DATA: PlayerDataSchema = {
 	lootBag = {},
 	indexDiscovered = {},
 	settings = { musicVolume = 0.5, sfxVolume = 0.8, uiScale = 1.0 },
-	lifetimeStats = { totalCashEarned = 0, totalCartsReturned = 0, totalRebirths = 0 },
+	lifetimeStats = { totalCashEarned = 0, totalCartsReturned = 0, totalRebirths = 0, bestSingleReturn = 0 },
 	lastSaved = 0,
 }
 

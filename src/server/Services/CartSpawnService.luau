@@ -83,6 +83,19 @@ local function rollRarity(worldId: number, position: Vector3): string
 	return EconomyMath.RollRarity(weights)
 end
 
+-- Phase 10 (�8): "a soft chime audible within ~40 studs" / "a distinct 1-
+-- second particle beam visible to nearby players" both need every player
+-- sharing the Legendary cart's World to hear/see it, not just whoever
+-- eventually claims it -- CartClaimed alone (single-target) can't do that.
+local function firePlayersInWorld(worldId: number, remoteName: string, data: { [string]: any })
+	local remote = remotesFolder:FindFirstChild(remoteName) :: RemoteEvent
+	for _, player in Players:GetPlayers() do
+		if WorldService.GetCurrentWorld(player) == worldId then
+			remote:FireClient(player, data)
+		end
+	end
+end
+
 local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
 	local rarity = rollRarity(zone.worldId, attachment.WorldPosition)
 	local cart = cartTemplate:Clone()
@@ -102,6 +115,10 @@ local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
 		zoneIndex = zone.zoneIndex,
 		claiming = nil,
 	}
+
+	if rarity == "Legendary" then
+		firePlayersInWorld(zone.worldId, "LegendaryCartSpawned", { position = attachment.WorldPosition })
+	end
 end
 
 local function despawnAndScheduleRespawn(zone: ZoneRuntime, attachment: Attachment)
@@ -150,6 +167,7 @@ local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attac
 		end
 
 		local rarity = stillActive.rarity
+		local claimPosition = stillActive.cart:GetPivot().Position
 		stillActive.cart:Destroy()
 		despawnAndScheduleRespawn(zone, attachment)
 
@@ -157,6 +175,10 @@ local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attac
 
 		local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
 		cartClaimed:FireClient(player, { rarity = rarity })
+
+		if rarity == "Legendary" then
+			firePlayersInWorld(zone.worldId, "LegendaryCartClaimed", { position = claimPosition })
+		end
 	end)
 end
 

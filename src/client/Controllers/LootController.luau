@@ -9,6 +9,7 @@
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
@@ -90,15 +91,28 @@ local function renderSellButton()
 	sellAllButton.AutoButtonColor = nearNPC
 end
 
+-- §8 "NPC interaction feedback": a short idle "gesture" on trigger. The
+-- placeholder NPC isn't guaranteed to have a rigged animation, so this uses
+-- a rig-agnostic Model.Scale bounce instead of an AnimationTrack.
+local NPC_GESTURE_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local function playNPCGesture(npc: Model)
+	local ok = pcall(function()
+		npc.Scale = 1.08
+	end)
+	if ok then
+		TweenService:Create(npc, NPC_GESTURE_INFO, { Scale = 1 }):Play()
+	end
+end
+
 local function connectSellNPCs(requestSellLoot: RemoteFunction)
 	local worldsFolder = Workspace:WaitForChild("Worlds")
 	for _, worldEntry in WorldData.Worlds do
 		local worldFolder = worldsFolder:WaitForChild(worldEntry.FolderName)
-		local npc = worldFolder:FindFirstChild("PH_NPC_LootSeller")
+		local npc = worldFolder:FindFirstChild("PH_NPC_LootSeller") :: Model?
 		local prompt = npc
 			and npc:FindFirstChild("HumanoidRootPart")
 			and npc.HumanoidRootPart:FindFirstChild("SellPrompt") :: ProximityPrompt?
-		if prompt then
+		if prompt and npc then
 			prompt.PromptShown:Connect(function()
 				nearNPC = true
 				renderSellButton()
@@ -108,6 +122,7 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 				renderSellButton()
 			end)
 			prompt.Triggered:Connect(function()
+				playNPCGesture(npc)
 				uiAnimationController.OpenFrame("Sell")
 			end)
 		end
@@ -117,7 +132,14 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 		if not nearNPC then
 			return
 		end
-		requestSellLoot:InvokeServer(false)
+		local result = requestSellLoot:InvokeServer(false) :: { success: boolean? }
+		if result and result.success then
+			local sound = Instance.new("Sound")
+			sound.Name = "PH_SFX_Sell"
+			sound.Parent = player:WaitForChild("PlayerGui")
+			sound:Play()
+			game:GetService("Debris"):AddItem(sound, 2)
+		end
 	end)
 end
 

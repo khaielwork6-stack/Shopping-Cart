@@ -28,6 +28,12 @@ local REMOTES: { [string]: RemoteKind } = {
 	-- (�8)" -- a VFX-trigger-only event, exactly mirroring ZoneUnlocked's
 	-- existing pattern, not a new kind of thing.
 	WorldUnlocked = "RemoteEvent",
+
+	-- Phase 10 (�8) additions: the two Legendary "social beat" VFX triggers
+	-- (spawn chime, collection beam) are broadcast to every player sharing
+	-- the same World, not just the one player CartClaimed already targets.
+	LegendaryCartSpawned = "RemoteEvent",
+	LegendaryCartClaimed = "RemoteEvent",
 }
 
 local RemotesSetup = {}
