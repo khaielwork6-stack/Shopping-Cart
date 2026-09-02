@@ -22,6 +22,8 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+local SoundController = require(script.Parent.SoundController)
+
 local UIAnimationController = {}
 
 local SCREEN_GUI_NAME = "ScreenGui"
@@ -244,6 +246,7 @@ closeFrame = function(frame, skipRestore)
 	if not skipRestore then
 		updateBlur(false)
 		restoreOwnHud()
+		SoundController.PlaySFX("UIOpenClose")
 	end
 end
 
@@ -282,6 +285,7 @@ openFrame = function(frame)
 	currentlyOpenFrame = frame
 	updateBlur(true)
 	hideOwnHud()
+	SoundController.PlaySFX("UIOpenClose")
 end
 
 local function setupFrame(frame: Frame)
@@ -324,6 +328,7 @@ local function setupButton(button: GuiButton)
 		isHovering = true
 		if not isPressed then
 			animateScale(uiScale, HOVER_SCALE, hoverTweenInfo)
+			SoundController.PlaySFX("HoverButton", { Volume = 0.4 })
 		end
 	end)
 
@@ -351,6 +356,7 @@ local function setupButton(button: GuiButton)
 
 	button.MouseButton1Click:Connect(function()
 		punchRotation(button)
+		SoundController.PlaySFX("UIClick")
 
 		if matchingFrame and matchingFrame:IsA("Frame") then
 			if currentlyOpenFrame == matchingFrame and matchingFrame.Visible then
@@ -381,6 +387,7 @@ local function showNotification(templateName: string)
 	end
 
 	local targetSize = (template :: any).Size
+	SoundController.PlaySFX("Notification")
 
 	local container = Instance.new("CanvasGroup")
 	container.Name = "_Notification_" .. templateName

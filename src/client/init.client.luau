@@ -11,6 +11,7 @@ local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 RemotesSetup.WaitForAll()
 
 local BOOT_ORDER = {
+	{ Name = "SoundController", Module = script.Controllers.SoundController },
 	{ Name = "UIAnimationController", Module = script.Controllers.UIAnimationController },
 	{ Name = "UIController", Module = script.Controllers.UIController },
 	{ Name = "WorldController", Module = script.Controllers.WorldController },

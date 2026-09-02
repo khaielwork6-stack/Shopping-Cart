@@ -66,6 +66,7 @@ local cache: PlayerDataCache = {
 
 local screenGui: ScreenGui
 local uiAnimationController: any
+local soundController: any
 local rebirthIconButton: TextButton
 
 local function renderHud()
@@ -169,11 +170,7 @@ local function playLevelUpBurst()
 		Debris:AddItem(attachment, 1)
 	end
 
-	local sound = Instance.new("Sound")
-	sound.Name = "PH_SFX_LevelUp"
-	sound.Parent = player:WaitForChild("PlayerGui")
-	sound:Play()
-	Debris:AddItem(sound, 2)
+	soundController.PlaySFX("LevelUp")
 
 	local levelLabel = screenGui.ProgressBar.Frame.LEVEL :: TextLabel
 	local uiScale = levelLabel:FindFirstChildOfClass("UIScale")
@@ -224,11 +221,7 @@ local function playRebirthCinematic()
 		Debris:AddItem(attachment, 2)
 	end
 
-	local sound = Instance.new("Sound")
-	sound.Name = "PH_SFX_Rebirth"
-	sound.Parent = player:WaitForChild("PlayerGui")
-	sound:Play()
-	Debris:AddItem(sound, 3)
+	soundController.PlaySFX("Rebirth")
 
 	task.wait(REBIRTH_CINEMATIC_DURATION)
 
@@ -255,15 +248,9 @@ end
 
 -- §8 "Upgrade purchase": a short SFX on every successful buy, alongside the
 -- button's own micro-bounce/ripple (already handled generically by
--- UIAnimationController for every GuiButton).
-local function playPurchaseSFX()
-	local sound = Instance.new("Sound")
-	sound.Name = "PH_SFX_Purchase"
-	sound.Parent = player:WaitForChild("PlayerGui")
-	sound:Play()
-	Debris:AddItem(sound, 2)
-end
-
+-- UIAnimationController for every GuiButton). A failed attempt (insufficient
+-- Cash, etc.) gets the distinct "denied" SFX instead, so a click never goes
+-- silently unanswered.
 local function setupUpgradeButtons(requestPurchaseUpgrade: RemoteFunction)
 	local grid = screenGui.Frames.Upgrades.ScrollingFrame.Upgrades
 	for _, stat in STAT_ORDER do
@@ -272,7 +259,9 @@ local function setupUpgradeButtons(requestPurchaseUpgrade: RemoteFunction)
 			card.Frame.Choose.Money.MouseButton1Click:Connect(function()
 				local result = requestPurchaseUpgrade:InvokeServer(stat, 1) :: { success: boolean? }
 				if result and result.success then
-					playPurchaseSFX()
+					soundController.PlaySFX("UpgradePurchase")
+				else
+					soundController.PlaySFX("UIDenied")
 				end
 			end)
 		end
@@ -286,6 +275,8 @@ local function setupRebirthButton(requestRebirth: RemoteFunction)
 		if result and result.success then
 			playRebirthCinematic()
 			uiAnimationController.ShowNotification("RebirthComplete")
+		else
+			soundController.PlaySFX("UIDenied")
 		end
 	end)
 end
@@ -294,21 +285,35 @@ end
 -- drag-slider control (our schema stores a volume number, but a toggle is
 -- far simpler to make reliable, and Phase 10 owns actually wiring real
 -- audio -- this just persists the on/off intent).
+-- §13 QA: the pack's "Zipper" toggle is a track+knob switch (CanvasGroup
+--'knob' at the end of a Frame 'track') -- the old version only ever updated
+-- a text label inside the knob ("ON"/"OFF") and never actually moved
+-- anything, which is what read as "the slider doesn't move." The knob's
+-- Position.X now tweens between the track's two ends on every toggle.
+local KNOB_SLIDE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local renderSettingsToggles: () -> ()
+
 local function setupSettingsToggles(requestUpdateSettings: RemoteFunction)
 	local scrolling = screenGui.Frames.Settings.ScrollingFrame
+	local renderers: { () -> () } = {}
 
 	local function wireToggle(row: Frame, get: () -> number, set: (number) -> (), persist: (number) -> ())
-		local button = row.Frame.Zipper.Frame.CanvasGroup.Button
-		local priceLabel = button.Frame.Price
+		local knob = row.Frame.Zipper.Frame.CanvasGroup
+		local priceLabel = knob.Button.Frame.Price
 		local function render()
-			priceLabel.Text = get() > 0 and "ON" or "OFF"
+			local on = get() > 0
+			priceLabel.Text = on and "ON" or "OFF"
+			local targetX = on and 1 or 0
+			TweenService:Create(knob, KNOB_SLIDE_INFO, { Position = UDim2.new(targetX, 0, knob.Position.Y.Scale, knob.Position.Y.Offset) }):Play()
 		end
 		render()
-		button.MouseButton1Click:Connect(function()
+		table.insert(renderers, render)
+		knob.Button.MouseButton1Click:Connect(function()
 			local newValue = get() > 0 and 0 or 1
 			set(newValue)
 			render()
 			persist(newValue)
+			soundController.ApplySettings(cache.settings)
 		end)
 	end
 
@@ -326,6 +331,12 @@ local function setupSettingsToggles(requestUpdateSettings: RemoteFunction)
 	end, function(v)
 		requestUpdateSettings:InvokeServer(nil, v)
 	end)
+
+	renderSettingsToggles = function()
+		for _, render in renderers do
+			render()
+		end
+	end
 end
 
 function UIController.Init()
@@ -333,6 +344,7 @@ function UIController.Init()
 	screenGui = playerGui:WaitForChild("ScreenGui") :: ScreenGui
 	rebirthIconButton = screenGui.Buttons.Left.Rebirth
 	uiAnimationController = require(script.Parent.UIAnimationController)
+	soundController = require(script.Parent.SoundController)
 
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local requestPurchaseUpgrade = remotesFolder:FindFirstChild("RequestPurchaseUpgrade") :: RemoteFunction
@@ -363,6 +375,7 @@ function UIController.Init()
 		rebirthPushPowerMultiplier: number?,
 		rebirthCashMultiplier: number?,
 		currentWorld: number?,
+		settings: { musicVolume: number?, sfxVolume: number? }?,
 	})
 		if data.cash ~= nil then
 			cache.cash = data.cash
@@ -396,6 +409,18 @@ function UIController.Init()
 		end
 		if data.currentWorld ~= nil then
 			cache.currentWorld = data.currentWorld
+		end
+		if data.settings ~= nil then
+			if data.settings.musicVolume ~= nil then
+				cache.settings.musicVolume = data.settings.musicVolume
+			end
+			if data.settings.sfxVolume ~= nil then
+				cache.settings.sfxVolume = data.settings.sfxVolume
+			end
+			soundController.ApplySettings(cache.settings)
+			if renderSettingsToggles then
+				renderSettingsToggles()
+			end
 		end
 
 		renderHud()

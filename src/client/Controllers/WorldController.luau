@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
+local SoundController = require(script.Parent.SoundController)
 
 local WorldController = {}
 
@@ -87,7 +88,12 @@ function WorldController.Init()
 		local card = scrolling:FindFirstChild("World" .. world.Id)
 		if card then
 			card.Frame.Choose.Money.MouseButton1Click:Connect(function()
-				requestEnterWorldPortal:InvokeServer(world.Id)
+				local result = requestEnterWorldPortal:InvokeServer(world.Id) :: { success: boolean? }
+				if result and result.success then
+					SoundController.PlaySFX("PortalEnter")
+				else
+					SoundController.PlaySFX("UIDenied")
+				end
 			end)
 		end
 	end

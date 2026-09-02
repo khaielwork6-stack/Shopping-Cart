@@ -15,6 +15,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
 local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
+local SoundController = require(script.Parent.SoundController)
 
 local LootController = {}
 
@@ -78,7 +79,12 @@ local function renderBag(requestOpenSealedItem: RemoteFunction)
 		card.Frame.Choose.Money.Visible = entry.sealed
 		if entry.sealed then
 			card.Frame.Choose.Money.MouseButton1Click:Connect(function()
-				requestOpenSealedItem:InvokeServer(entry.itemId)
+				local result = requestOpenSealedItem:InvokeServer(entry.itemId) :: { success: boolean? }
+				if result and result.success then
+					SoundController.PlaySFX("ItemReveal")
+				else
+					SoundController.PlaySFX("UIDenied")
+				end
 			end)
 		end
 
@@ -126,6 +132,7 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 			end)
 			prompt.Triggered:Connect(function()
 				playNPCGesture(npc)
+				SoundController.PlaySFX("NPCInteraction")
 				uiAnimationController.OpenFrame("Sell")
 			end)
 		end
@@ -137,11 +144,9 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 		end
 		local result = requestSellLoot:InvokeServer(false) :: { success: boolean? }
 		if result and result.success then
-			local sound = Instance.new("Sound")
-			sound.Name = "PH_SFX_Sell"
-			sound.Parent = player:WaitForChild("PlayerGui")
-			sound:Play()
-			game:GetService("Debris"):AddItem(sound, 2)
+			SoundController.PlaySFX("Sell")
+		else
+			SoundController.PlaySFX("UIDenied")
 		end
 	end)
 end

@@ -459,6 +459,17 @@ function PlayerDataService.Init()
 	Players.PlayerAdded:Connect(function(player: Player)
 		loadPlayerData(player)
 		startAutosaveLoop(player)
+
+		-- §13 QA: settings were saved server-side but never pushed back to
+		-- the client anywhere, so the Settings screen always rendered its
+		-- hardcoded local default (never the player's actual saved
+		-- Music/SFX choice) on every rejoin. RemotesSetup.CreateAll() is
+		-- idempotent (returns the existing folder), safe to call again here
+		-- rather than restructuring Init's own local.
+		local remotesFolder = RemotesSetup.CreateAll()
+		local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
+		local data = PlayerDataService.Get(player)
+		playerDataUpdated:FireClient(player, { settings = data.settings })
 	end)
 
 	Players.PlayerRemoving:Connect(onPlayerRemoving)

@@ -24,6 +24,7 @@ local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local FormatNumber = require(ReplicatedStorage.Shared.Modules.FormatNumber)
 local CartVisuals = require(ReplicatedStorage.Shared.Modules.CartVisuals)
 local DeviceProfile = require(ReplicatedStorage.Shared.Modules.DeviceProfile)
+local SoundController = require(script.Parent.SoundController)
 
 local TrainController = {}
 
@@ -293,13 +294,7 @@ local function playCollectSFX(rarity: string)
 	if not display then
 		return
 	end
-	local sound = Instance.new("Sound")
-	sound.Name = "PH_SFX_Collect"
-	sound.PlaybackSpeed = display.CollectPitch
-	sound.Volume = 0.5
-	sound.Parent = player:WaitForChild("PlayerGui")
-	sound:Play()
-	Debris:AddItem(sound, 2)
+	SoundController.PlaySFX("CartCollect", { PlaybackSpeed = display.CollectPitch, Volume = 0.5 })
 end
 
 -- §8 "Screen feedback": a very subtle (<0.15s) camera nudge, reserved for
@@ -441,6 +436,10 @@ local function tryReturnCarts(remotesFolder: Folder, uiAnimationController: any)
 		local corral = corralsByWorld[currentWorld]
 		if corral then
 			playCorralGlow(corral, result.isPersonalBest == true)
+		end
+
+		if result.isPersonalBest then
+			SoundController.PlaySFX("PersonalBest")
 		end
 	end
 

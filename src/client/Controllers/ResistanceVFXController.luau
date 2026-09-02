@@ -6,10 +6,9 @@
 -- the server's own SpeedFactor (inside EconomyService's return-trip dwell)
 -- is the only one that actually gates Cash.
 --
--- Also owns the one-time ZoneUnlocked fanfare (�4.2/�8): a particle burst
--- at the Corral + a placeholder chime (PH_SFX_ZoneUnlock -- see �7; no
--- SoundId set yet, correctly named so a future art pass can fill it in
--- without touching trigger code).
+-- Also owns the one-time ZoneUnlocked/WorldUnlocked fanfare (�4.2/�8): a
+-- particle burst at the Corral + the real ZoneUnlock/WorldUnlock SFX
+-- (SoundConfig, �13 art pass), played through SoundController.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -22,6 +21,7 @@ local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local ZoneData = require(ReplicatedStorage.Shared.Configs.ZoneData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local DeviceProfile = require(ReplicatedStorage.Shared.Modules.DeviceProfile)
+local SoundController = require(script.Parent.SoundController)
 
 local ResistanceVFXController = {}
 
@@ -37,8 +37,6 @@ local cachedCurrentWorld = 1
 local cachedRebirthPushPowerMultiplier = 1
 local cachedIndexPushPowerBonus = 1
 local dragEmitter: ParticleEmitter?
-local zoneUnlockSound: Sound?
-local worldUnlockSound: Sound?
 
 local function ensureDragEmitter(root: BasePart)
 	if dragEmitter and dragEmitter.Parent then
@@ -105,7 +103,7 @@ local function onHeartbeat()
 	applyResistanceVFX(root, speedFactor)
 end
 
-local function playZoneUnlockFanfare(sound: Sound?)
+local function playZoneUnlockFanfare(soundName: string)
 	local worldEntry = WorldData.GetWorld(cachedCurrentWorld)
 	local worldFolder = worldEntry and Workspace:FindFirstChild("Worlds") and Workspace.Worlds:FindFirstChild(worldEntry.FolderName)
 	local corral = worldFolder and worldFolder:FindFirstChild("Corral") :: BasePart?
@@ -130,26 +128,12 @@ local function playZoneUnlockFanfare(sound: Sound?)
 	emitter:Emit(DeviceProfile.ScaleParticleCount(30))
 	Debris:AddItem(attachment, 2)
 
-	if sound then
-		sound:Play()
-	end
+	SoundController.PlaySFX(soundName)
 end
 
 function ResistanceVFXController.Init()
 	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
 	local uiAnimationController = require(script.Parent.UIAnimationController)
-
-	-- PH_SFX_ZoneUnlock / PH_SFX_WorldUnlock (�7): no SoundId set yet -- a
-	-- future art pass fills these in; :Play() is already correctly wired.
-	local zoneSound = Instance.new("Sound")
-	zoneSound.Name = "PH_SFX_ZoneUnlock"
-	zoneSound.Parent = player:WaitForChild("PlayerGui")
-	zoneUnlockSound = zoneSound
-
-	local worldSound = Instance.new("Sound")
-	worldSound.Name = "PH_SFX_WorldUnlock"
-	worldSound.Parent = player:WaitForChild("PlayerGui")
-	worldUnlockSound = worldSound
 
 	local playerDataUpdated = remotesFolder:FindFirstChild("PlayerDataUpdated") :: RemoteEvent
 	playerDataUpdated.OnClientEvent:Connect(function(data: {
@@ -174,7 +158,7 @@ function ResistanceVFXController.Init()
 
 	local zoneUnlocked = remotesFolder:FindFirstChild("ZoneUnlocked") :: RemoteEvent
 	zoneUnlocked.OnClientEvent:Connect(function(data: { world: number, zone: number })
-		playZoneUnlockFanfare(zoneUnlockSound)
+		playZoneUnlockFanfare("ZoneUnlock")
 		uiAnimationController.ShowNotification("ZoneUnlocked", "Zone " .. data.zone .. " unlocked!")
 	end)
 
@@ -183,7 +167,7 @@ function ResistanceVFXController.Init()
 	-- requirement, not a generic message.
 	local worldUnlocked = remotesFolder:FindFirstChild("WorldUnlocked") :: RemoteEvent
 	worldUnlocked.OnClientEvent:Connect(function(data: { worldId: number, worldName: string })
-		playZoneUnlockFanfare(worldUnlockSound)
+		playZoneUnlockFanfare("WorldUnlock")
 		uiAnimationController.ShowNotification("ZoneUnlocked", data.worldName .. " unlocked!")
 	end)
 
