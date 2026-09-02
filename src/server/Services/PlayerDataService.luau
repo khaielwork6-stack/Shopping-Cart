@@ -115,7 +115,7 @@ local playerData: { [Player]: PlayerDataSchema } = {}
 local loaded: { [Player]: boolean } = {}
 local autosaveThreads: { [Player]: thread } = {}
 
-local economyServiceCache: { LiquidateTrainOnLeave: (Player) -> () }? = nil
+local economyServiceCache: { LiquidateTrainOnLeave: (Player) -> (), CleanupPlayer: (Player) -> () }? = nil
 local function getEconomyService()
 	if not economyServiceCache then
 		economyServiceCache = require(script.Parent.EconomyService) :: any
@@ -434,7 +434,14 @@ local function onPlayerRemoving(player: Player)
 
 	-- �4.1.4: uncollected train cargo is liquidated to Cash, never persisted
 	-- as raw cargo -- must happen before the final save captures Cash.
-	getEconomyService().LiquidateTrainOnLeave(player)
+	-- §13 QA: CleanupPlayer must run strictly after this, in this same
+	-- thread -- it used to be EconomyService's own competing PlayerRemoving
+	-- connection, which could (and did, confirmed via live testing) win the
+	-- race and wipe the train before this read it, silently discarding the
+	-- leaving player's uncollected Cash value.
+	local economyService = getEconomyService()
+	economyService.LiquidateTrainOnLeave(player)
+	economyService.CleanupPlayer(player)
 
 	savePlayerData(player)
 

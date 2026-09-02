@@ -169,6 +169,17 @@ function EconomyService.LiquidateTrainOnLeave(player: Player)
 	table.clear(train)
 end
 
+-- §13 QA: in-memory cleanup only (the `trains`/`isReturning` keys, not
+-- anything persisted) -- must run strictly after LiquidateTrainOnLeave has
+-- read and cleared this player's train, so PlayerDataService's single
+-- onPlayerRemoving handler calls this explicitly right after that, rather
+-- than this Service racing it via its own separate PlayerRemoving
+-- connection (see Init's comment on the bug that caused).
+function EconomyService.CleanupPlayer(player: Player)
+	trains[player] = nil
+	isReturning[player] = nil
+end
+
 -- �3.2: awards XP (CashValue/5, min 1, per cart) and cascades level-ups;
 -- Total Level increments once per level gained and never decreases.
 local function awardXPAndLevelUp(data: PlayerDataService.PlayerDataSchema, xpEarned: number)
@@ -323,10 +334,14 @@ function EconomyService.Init()
 		pushPlayerData(player)
 	end)
 
-	Players.PlayerRemoving:Connect(function(player: Player)
-		trains[player] = nil
-		isReturning[player] = nil
-	end)
+	-- §13 QA: cleanup used to be its own Players.PlayerRemoving connection
+	-- here, racing against PlayerDataService's own onPlayerRemoving (which
+	-- calls LiquidateTrainOnLeave above) -- multiple listeners on the same
+	-- signal have no guaranteed relative ordering, and live testing confirmed
+	-- this one could win, wiping trains[player] before LiquidateTrainOnLeave
+	-- ever read it and silently discarding a leaving player's uncollected
+	-- Cash value. EconomyService.CleanupPlayer (below) replaces it, called
+	-- explicitly and deterministically from that single handler instead.
 
 	-- Command-Bar-only test hook (Phase 4's own Test Procedure explicitly
 	-- sanctions "Command-Bar-grant XP for test speed" -- reaching Level 25
