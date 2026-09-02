@@ -21,6 +21,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local ZoneData = require(ReplicatedStorage.Shared.Configs.ZoneData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
+local DeviceProfile = require(ReplicatedStorage.Shared.Modules.DeviceProfile)
 
 local ResistanceVFXController = {}
 
@@ -64,15 +65,18 @@ local function ensureDragEmitter(root: BasePart)
 	return emitter
 end
 
--- Three-tier VFX exactly per �4.2's pseudocode.
+-- Three-tier VFX exactly per §4.2's pseudocode. This is the one continuous
+-- (not one-shot) emitter in the whole game -- it can run for as long as a
+-- player is fighting through resistance -- so it's the highest-value place
+-- for §11.7's mobile density scaling to actually matter.
 local function applyResistanceVFX(root: BasePart, speedFactor: number)
 	local emitter = ensureDragEmitter(root)
 	if speedFactor < HEAVY_THRESHOLD then
 		emitter.Enabled = true
-		emitter.Rate = 24
+		emitter.Rate = DeviceProfile.ScaleRate(24)
 	elseif speedFactor < LIGHT_THRESHOLD then
 		emitter.Enabled = true
-		emitter.Rate = 8
+		emitter.Rate = DeviceProfile.ScaleRate(8)
 	else
 		emitter.Enabled = false
 		emitter.Rate = 0
@@ -123,7 +127,7 @@ local function playZoneUnlockFanfare(sound: Sound?)
 	emitter.Rate = 0
 	emitter.Parent = attachment
 
-	emitter:Emit(30)
+	emitter:Emit(DeviceProfile.ScaleParticleCount(30))
 	Debris:AddItem(attachment, 2)
 
 	if sound then

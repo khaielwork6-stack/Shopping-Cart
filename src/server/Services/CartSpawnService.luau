@@ -48,6 +48,35 @@ local zonesByWorld: { [number]: { ZoneRuntime } } = {}
 local remotesFolder: Folder
 local cartTemplate: Model
 
+-- §11.2 object pooling: a claimed cart is returned here instead of
+-- destroyed, and a respawn reuses a pooled instance before ever cloning a
+-- new one -- reposition/re-tint/re-parent, never Instance.new()/Destroy()
+-- in steady state. Sized against §4.1.1's own MaxActiveCarts formula (14 +
+-- 3*zoneIndex, capping at 35 for Zone 8) so a full single World's worth of
+-- simultaneous respawns can never exceed the pool and fall back to
+-- cloning; a real multi-World cross-server pool isn't needed since only
+-- the player's current World's Zones are ever actively spawning (§4.1.1's
+-- per-World budget applies one World at a time in practice).
+local MAX_POOL_SIZE = 35
+local cartPool: { Model } = {}
+
+local function acquireCart(): Model
+	local pooled = table.remove(cartPool)
+	if pooled then
+		return pooled
+	end
+	return cartTemplate:Clone()
+end
+
+local function releaseCart(cart: Model)
+	if #cartPool >= MAX_POOL_SIZE then
+		cart:Destroy()
+		return
+	end
+	cart.Parent = nil
+	table.insert(cartPool, cart)
+end
+
 local function cartKey(worldId: number, zoneIndex: number, attachmentName: string): string
 	return worldId .. "_" .. zoneIndex .. "_" .. attachmentName
 end
@@ -101,7 +130,7 @@ end
 
 local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
 	local rarity = rollRarity(zone.worldId, attachment.WorldPosition)
-	local cart = cartTemplate:Clone()
+	local cart = acquireCart()
 	cart:PivotTo(CFrame.new(attachment.WorldPosition))
 
 	local display = CartData.RarityDisplay[rarity]
@@ -171,7 +200,7 @@ local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attac
 
 		local rarity = stillActive.rarity
 		local claimPosition = stillActive.cart:GetPivot().Position
-		stillActive.cart:Destroy()
+		releaseCart(stillActive.cart)
 		despawnAndScheduleRespawn(zone, attachment)
 
 		EconomyService.AddCartToTrain(player, { rarity = rarity, world = zone.worldId, zone = zone.zoneIndex })

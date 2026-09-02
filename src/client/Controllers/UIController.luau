@@ -19,6 +19,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local FormatNumber = require(ReplicatedStorage.Shared.Modules.FormatNumber)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
+local DeviceProfile = require(ReplicatedStorage.Shared.Modules.DeviceProfile)
 
 local UIController = {}
 
@@ -164,7 +165,7 @@ local function playLevelUpBurst()
 		emitter.Rate = 0
 		emitter.Parent = attachment
 
-		emitter:Emit(24)
+		emitter:Emit(DeviceProfile.ScaleParticleCount(24))
 		Debris:AddItem(attachment, 1)
 	end
 
@@ -219,7 +220,7 @@ local function playRebirthCinematic()
 		emitter.Rate = 0
 		emitter.Parent = attachment
 
-		emitter:Emit(50)
+		emitter:Emit(DeviceProfile.ScaleParticleCount(50))
 		Debris:AddItem(attachment, 2)
 	end
 

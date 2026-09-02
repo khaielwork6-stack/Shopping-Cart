@@ -23,6 +23,7 @@ local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local FormatNumber = require(ReplicatedStorage.Shared.Modules.FormatNumber)
 local CartVisuals = require(ReplicatedStorage.Shared.Modules.CartVisuals)
+local DeviceProfile = require(ReplicatedStorage.Shared.Modules.DeviceProfile)
 
 local TrainController = {}
 
@@ -281,7 +282,7 @@ local function playRarityWisp(rarity: string)
 	emitter.Rate = 0
 	emitter.Parent = attachment
 
-	emitter:Emit(16)
+	emitter:Emit(DeviceProfile.ScaleParticleCount(16))
 	Debris:AddItem(attachment, 1)
 end
 
@@ -365,7 +366,7 @@ local function playLegendaryCollectionBeam(position: Vector3)
 	emitter.Rate = 0
 	emitter.Parent = attachment
 
-	emitter:Emit(40)
+	emitter:Emit(DeviceProfile.ScaleParticleCount(40))
 	Debris:AddItem(anchor, 1.5)
 end
 
@@ -412,7 +413,7 @@ local function playCorralGlow(corral: BasePart, isPersonalBest: boolean)
 		confetti.Rate = 0
 		confetti.Parent = attachment
 
-		confetti:Emit(30)
+		confetti:Emit(DeviceProfile.ScaleParticleCount(30))
 		Debris:AddItem(attachment, 2)
 	end
 end
