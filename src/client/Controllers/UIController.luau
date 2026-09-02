@@ -12,6 +12,7 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
@@ -21,6 +22,15 @@ local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local UIController = {}
 
 local player = Players.LocalPlayer
+
+local FILL_TWEEN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- Progress-bar fills are anchored (0, 0.5) so growing Size.X.Scale extends
+-- purely left->right; tweening it (instead of snapping) is what makes XP/
+-- Rebirth gains read as a smooth fill rather than an instant jump.
+local function tweenFillWidth(fill: Frame, targetScale: number)
+	TweenService:Create(fill, FILL_TWEEN_INFO, { Size = UDim2.new(targetScale, 0, fill.Size.Y.Scale, fill.Size.Y.Offset) }):Play()
+end
 
 local STAT_ORDER: { EconomyConfig.UpgradeStatName } = { "capacity", "agility", "mobility", "range", "pushPower" }
 
@@ -66,7 +76,7 @@ local function renderHud()
 	pb.LEVEL.Text = "Level " .. cache.currentLevel
 	pb.AMOUNT.Text = string.format("%d / %d XP", cache.currentXP, cache.xpForNextLevel)
 	local fraction = cache.xpForNextLevel > 0 and (cache.currentXP / cache.xpForNextLevel) or 0
-	pb.Frame.Size = UDim2.new(math.clamp(fraction, 0, 1), 0, pb.Frame.Size.Y.Scale, 0)
+	tweenFillWidth(pb.Frame, math.clamp(fraction, 0, 1))
 end
 
 local function renderUpgrades()
@@ -95,7 +105,7 @@ local function renderRebirth()
 	inner.Boost.Multiplier2.Frame.Price.Text = string.format("x%.1f", nextPushMult)
 	inner.ProgressBar.Progress.Text = string.format("Level %d / %d", cache.currentLevel, requirement)
 	local fraction = requirement > 0 and (cache.currentLevel / requirement) or 0
-	inner.ProgressBar.Frame.Frame.Size = UDim2.new(math.clamp(fraction, 0, 1), 0, inner.ProgressBar.Frame.Frame.Size.Y.Scale, 0)
+	tweenFillWidth(inner.ProgressBar.Frame.Frame, math.clamp(fraction, 0, 1))
 
 	inner.Buttons.Money.Frame.Price.Text = eligible and "Rebirth!" or "Not yet"
 

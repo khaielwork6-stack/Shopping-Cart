@@ -47,8 +47,11 @@ local RIPPLE_CONTAINER_ZINDEX = 0
 local FRAME_SLIDE_EXTRA_PADDING = 60
 local frameOpenSlideInfo = TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local frameOpenFadeInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local frameOpenPopInfo = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local frameClosePopInfo = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local frameCloseSlideInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local frameCloseFadeInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local FRAME_OPEN_START_SCALE = 0.8
 
 local BLUR_SIZE = 18
 local blurInTweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -226,6 +229,7 @@ closeFrame = function(frame, skipRestore)
 	local offset = getSlideDownOffset(frame)
 	local slideTween = TweenService:Create(frame, frameCloseSlideInfo, { Position = data.Position + UDim2.new(0, 0, 0, offset) })
 	TweenService:Create(frame, frameCloseFadeInfo, { BackgroundTransparency = 1 }):Play()
+	animateScale(getOrCreateUIScale(frame), FRAME_OPEN_START_SCALE, frameClosePopInfo)
 	slideTween:Play()
 	slideTween.Completed:Connect(function(state)
 		if state == Enum.PlaybackState.Completed then
@@ -268,8 +272,12 @@ openFrame = function(frame)
 	frame.BackgroundTransparency = 1
 	frame.Position = data.Position + UDim2.new(0, 0, 0, offset)
 
+	local uiScale = getOrCreateUIScale(frame)
+	uiScale.Scale = FRAME_OPEN_START_SCALE
+
 	TweenService:Create(frame, frameOpenSlideInfo, { Position = data.Position }):Play()
 	TweenService:Create(frame, frameOpenFadeInfo, { BackgroundTransparency = data.BackgroundTransparency }):Play()
+	animateScale(uiScale, NORMAL_SCALE, frameOpenPopInfo)
 
 	currentlyOpenFrame = frame
 	updateBlur(true)
