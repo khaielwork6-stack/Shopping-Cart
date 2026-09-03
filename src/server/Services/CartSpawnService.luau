@@ -316,7 +316,11 @@ local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
 			descendant.CanCollide = false
 		end
 	end
-	root.CFrame = CFrame.new(attachment.WorldPosition)
+	-- Bottom-aligned on the spawn point rather than centered on it -- with
+	-- the covers now scaled up to a real, "hunt me from across the map"
+	-- size, centering would sink half the model into the ground.
+	local spawnPos = attachment.WorldPosition
+	root.CFrame = CFrame.new(spawnPos.X, spawnPos.Y + root.Size.Y / 2, spawnPos.Z)
 	-- Security: the world object only ever knows its own rarity, never the
 	-- real CartID -- LostCartData's Security note.
 	cover:SetAttribute("Rarity", rarity)
