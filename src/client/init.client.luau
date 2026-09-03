@@ -32,6 +32,7 @@ local BOOT_ORDER = {
 	{ Name = "WorldController", Module = script.Controllers.WorldController },
 	{ Name = "InputController", Module = script.Controllers.InputController },
 	{ Name = "TrainController", Module = script.Controllers.TrainController },
+	{ Name = "LostCartRevealController", Module = script.Controllers.LostCartRevealController },
 	{ Name = "ResistanceVFXController", Module = script.Controllers.ResistanceVFXController },
 	{ Name = "LootController", Module = script.Controllers.LootController },
 	{ Name = "IndexController", Module = script.Controllers.IndexController },

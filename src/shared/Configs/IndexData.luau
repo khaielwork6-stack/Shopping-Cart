@@ -15,6 +15,7 @@ IndexData.SilhouetteByRarity = ({
 	Rare = "PH_Icon_Silhouette_Rare",
 	Epic = "PH_Icon_Silhouette_Epic",
 	Legendary = "PH_Icon_Silhouette_Legendary",
+	Secret = "PH_Icon_Silhouette_Secret",
 } :: { [EconomyConfig.RarityName]: string })
 
 return IndexData

@@ -25,6 +25,15 @@ local REMOTES: { [string]: RemoteKind } = {
 
 	-- server -> client, RemoteEvent (past-tense-noun-named per �5.7)
 	CartClaimed = "RemoteEvent",
+
+	-- Lost Cart GDD: fired at the exact moment a claim finalizes, carrying
+	-- the real CartID rolled server-side (see the Security note in
+	-- LostCartData -- never sent any earlier than this) plus the
+	-- already-in-Workspace cover Instance, so LostCartRevealController can
+	-- play the compress/burst/reveal sequence in place before handing off
+	-- to TrainController.
+	CartRevealed = "RemoteEvent",
+
 	PlayerDataUpdated = "RemoteEvent",
 	ZoneUnlocked = "RemoteEvent",
 

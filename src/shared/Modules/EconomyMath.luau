@@ -138,7 +138,7 @@ function EconomyMath.LuckReallocate(luck: number): { [string]: number }
 	local movable = base.Common.Weight + base.Uncommon.Weight
 	local moved = movable * shift
 
-	local highTotal = base.Rare.Weight + base.Epic.Weight + base.Legendary.Weight
+	local highTotal = base.Rare.Weight + base.Epic.Weight + base.Legendary.Weight + base.Secret.Weight
 
 	local weights = {}
 	weights.Common = base.Common.Weight * (1 - shift)
@@ -146,6 +146,7 @@ function EconomyMath.LuckReallocate(luck: number): { [string]: number }
 	weights.Rare = base.Rare.Weight + moved * (base.Rare.Weight / highTotal)
 	weights.Epic = base.Epic.Weight + moved * (base.Epic.Weight / highTotal)
 	weights.Legendary = base.Legendary.Weight + moved * (base.Legendary.Weight / highTotal)
+	weights.Secret = base.Secret.Weight + moved * (base.Secret.Weight / highTotal)
 
 	return weights
 end

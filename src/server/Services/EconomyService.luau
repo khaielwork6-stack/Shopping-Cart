@@ -41,6 +41,10 @@ export type TrainItem = {
 	rarity: string,
 	world: number,
 	zone: number,
+	cartId: string?, -- Lost Cart GDD: which of the 23 real carts this is, for
+	-- the train's visual model. Optional so any pre-Lost-Cart-system caller
+	-- (none currently) still type-checks; cash value is still computed from
+	-- world/zone/rarity only (see LostCartData's own comment on why).
 }
 
 export type LevelState = {

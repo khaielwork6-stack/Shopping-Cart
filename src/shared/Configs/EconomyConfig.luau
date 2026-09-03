@@ -3,7 +3,7 @@
 -- EconomyMath is the only module allowed to consume these directly; Services
 -- must never re-derive or hardcode a number that already lives here.
 
-export type RarityName = "Common" | "Uncommon" | "Rare" | "Epic" | "Legendary"
+export type RarityName = "Common" | "Uncommon" | "Rare" | "Epic" | "Legendary" | "Secret"
 
 export type UpgradeStatName = "capacity" | "agility" | "mobility" | "range" | "pushPower"
 
@@ -34,14 +34,18 @@ EconomyConfig.Cart = {
 }
 
 -- �3.4.1 Rarity table (spawn weight + cash value multiplier)
-EconomyConfig.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary" } :: { RarityName }
+-- Lost Cart GDD adds a 6th tier, Secret, above Legendary. Legendary's weight
+-- is trimmed from 0.01 to 0.008 and Secret takes the remaining 0.002 so the
+-- table still sums to exactly 1.0 -- nothing else here changed.
+EconomyConfig.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Secret" } :: { RarityName }
 
 EconomyConfig.Rarity = {
 	Common = { Weight = 0.60, ValueMultiplier = 1 },
 	Uncommon = { Weight = 0.25, ValueMultiplier = 3 },
 	Rare = { Weight = 0.10, ValueMultiplier = 10 },
 	Epic = { Weight = 0.04, ValueMultiplier = 40 },
-	Legendary = { Weight = 0.01, ValueMultiplier = 200 },
+	Legendary = { Weight = 0.008, ValueMultiplier = 200 },
+	Secret = { Weight = 0.002, ValueMultiplier = 1000 },
 }
 
 -- �3.5.1 / �3.5.3 Push Power / Resistance

@@ -23,17 +23,17 @@ local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local FormatNumber = require(ReplicatedStorage.Shared.Modules.FormatNumber)
 local CartVisuals = require(ReplicatedStorage.Shared.Modules.CartVisuals)
+local CartTemplateLookup = require(ReplicatedStorage.Shared.Modules.CartTemplateLookup)
 local DeviceProfile = require(ReplicatedStorage.Shared.Modules.DeviceProfile)
 local SoundController = require(script.Parent.SoundController)
 
 local TrainController = {}
 
 -- Levitating carts (per the switch away from wheeled/grounded carts): every
--- cart model going forward ships as one complete, self-contained model
--- (cart + wheels baked in by whoever authors it), normalized to the same
--- standard size by CartVisuals so swapping the template below is the only
--- change a future cart variant needs.
-local CART_TEMPLATE = ReplicatedStorage.Assets.Placeholders:WaitForChild("Cart_Frostbite") :: Model
+-- cart model ships as one complete, self-contained model (cart + wheels
+-- baked in by whoever authors it), normalized to the same standard size by
+-- CartVisuals -- that's what makes swapping in a different model per train
+-- slot safe (CartTemplateLookup) rather than needing per-cart tuning.
 
 -- Cart-model test (see chat): both cart models provided so far share the
 -- same exported convention -- +X = front (handle is the opposite, -X),
@@ -197,17 +197,23 @@ local function playCollectPop(cart: Model)
 	TweenService:Create(body, COLLECT_POP_INFO, { Size = targetSize }):Play()
 end
 
-local function createVisualCart(): VisualCart
-	local model = CartVisuals.PrepareCart(CART_TEMPLATE)
+local function createVisualCart(template: Model): VisualCart
+	local model = CartVisuals.PrepareCart(template)
 	model.Parent = Workspace
 	playCollectPop(model)
 	return { model = model, body = model.PrimaryPart :: BasePart, distanceTraveled = 0, lastForward = nil }
 end
 
+-- Lost Cart GDD: real train growth is identity-aware (one specific model per
+-- slot, added the moment its reveal sequence finishes -- see
+-- TrainController.AddRevealedCart below, driven by LostCartRevealController)
+-- rather than a bare count. This function now only ever SHRINKS the visual
+-- train -- the one case that's still purely count-driven is a Return
+-- emptying it back to 0 cargo, which PlayerDataUpdated already reports as a
+-- plain trainCount. Called with a count >= the current visual length is a
+-- deliberate no-op so a CartRevealed race can never get double-added by a
+-- PlayerDataUpdated that arrives around the same moment.
 local function setTrainCount(count: number)
-	while #visualCarts < count do
-		table.insert(visualCarts, createVisualCart())
-	end
 	while #visualCarts > count do
 		local cart = table.remove(visualCarts)
 		if cart then
@@ -215,6 +221,26 @@ local function setTrainCount(count: number)
 		end
 	end
 	updateRollingWheels(count)
+end
+
+-- Public API: called by LostCartRevealController once a reveal sequence
+-- finishes, so the just-revealed cart's own real model flies in and joins
+-- the train -- this is the one and only place the visual train actually
+-- grows. Safe to call for a cartId this client doesn't recognize (falls
+-- back to Cart_Frostbite via CartTemplateLookup) so a data hiccup never
+-- errors. spawnCFrame is optional: when given (the reveal's own pop
+-- position), the new cart starts there and glides into train formation via
+-- onHeartbeat's existing smoothed follow, instead of popping in from
+-- wherever the template happens to sit -- the GDD's "cart smoothly flies
+-- into the train."
+function TrainController.AddRevealedCart(cartId: string?, spawnCFrame: CFrame?)
+	local template = CartTemplateLookup.Get(cartId)
+	local visualCart = createVisualCart(template)
+	if spawnCFrame then
+		visualCart.body.CFrame = spawnCFrame
+	end
+	table.insert(visualCarts, visualCart)
+	updateRollingWheels(#visualCarts)
 end
 
 -- Framerate-independent smoothing + procedural bob/lean, both driven by the
