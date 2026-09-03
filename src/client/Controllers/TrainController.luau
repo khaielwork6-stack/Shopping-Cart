@@ -93,6 +93,16 @@ local LEGENDARY_CHIME_RADIUS = 40
 local LEGENDARY_NUDGE_OFFSET = 0.12
 local LEGENDARY_NUDGE_INFO = TweenInfo.new(0.07, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 
+-- §8 "Corral feedback", idle half: the return station shouldn't read as a
+-- dead prop while nobody's using it -- a slow breathing light, a lazy
+-- upward drift of sparkles, and a slowly-spinning accent ring all loop
+-- forever via TweenService (RepeatCount = -1) rather than a manual
+-- Heartbeat connection, so this costs nothing per-frame beyond what the
+-- engine already does for any looping tween.
+local CORRAL_PULSE_INFO = TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local CORRAL_RING_SPIN_INFO = TweenInfo.new(6, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, false)
+local CORRAL_SUCCESS_PUNCH_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
 local player = Players.LocalPlayer
 
 type VisualCart = {
@@ -365,12 +375,67 @@ local function playLegendaryCollectionBeam(position: Vector3)
 	Debris:AddItem(anchor, 1.5)
 end
 
+-- §8 "Corral feedback", idle ambience: a permanent breathing light + a lazy
+-- rising sparkle drift + a slowly spinning ring accent, all parented to the
+-- (now-invisible) Corral trigger part so the visible "RETURN CARTS" model
+-- sitting on top of it reads as an active, alive station rather than a
+-- static prop, even when nobody's using it. Runs once per World at Init.
+local function setupCorralAmbient(corral: BasePart)
+	local pulseLight = Instance.new("PointLight")
+	pulseLight.Name = "PH_CorralAmbientGlow"
+	pulseLight.Color = Color3.fromRGB(90, 255, 140)
+	pulseLight.Range = 18
+	pulseLight.Brightness = 1
+	pulseLight.Parent = corral
+	TweenService:Create(pulseLight, CORRAL_PULSE_INFO, { Brightness = 2.6 }):Play()
+
+	local sparkleAttachment = Instance.new("Attachment")
+	sparkleAttachment.Name = "PH_CorralSparkleAnchor"
+	sparkleAttachment.Position = Vector3.new(0, 1, 0)
+	sparkleAttachment.Parent = corral
+
+	local sparkles = Instance.new("ParticleEmitter")
+	sparkles.Color = ColorSequence.new(Color3.fromRGB(140, 255, 170))
+	sparkles.Lifetime = NumberRange.new(1.2, 1.8)
+	sparkles.Speed = NumberRange.new(1.5, 2.5)
+	sparkles.SpreadAngle = Vector2.new(25, 25)
+	sparkles.Size = NumberSequence.new(0.25)
+	sparkles.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	sparkles.Rate = 4
+	sparkles.Parent = sparkleAttachment
+
+	-- a thin spinning ring hovering just above the pad -- cheap standalone
+	-- accent (not a decoration baked into the imported mesh), reads as "this
+	-- pad is active" even from a distance, without any per-frame script cost.
+	local ring = Instance.new("Part")
+	ring.Name = "PH_CorralAccentRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Size = Vector3.new(0.3, corral.Size.X * 0.85, corral.Size.Z * 0.85)
+	ring.CFrame = corral.CFrame * CFrame.new(0, 1.2, 0) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanQuery = false
+	ring.CanTouch = false
+	ring.Material = Enum.Material.Neon
+	ring.Color = Color3.fromRGB(120, 255, 150)
+	ring.Transparency = 0.55
+	ring.Parent = corral
+
+	TweenService:Create(ring, CORRAL_RING_SPIN_INFO, { CFrame = ring.CFrame * CFrame.Angles(math.rad(360), 0, 0) })
+		:Play()
+end
+
 -- §8 "Corral feedback": corral glows on a successful return -- a brief
--- brightness/color pulse via a temporary PointLight, restored afterward.
+-- brightness/color pulse via a temporary PointLight, restored afterward,
+-- plus a stronger radial sparkle burst and a satisfying scale-punch on the
+-- visible RETURN CARTS model so a successful cash-in reads as a real event.
 local function playCorralGlow(corral: BasePart, isPersonalBest: boolean)
 	local light = Instance.new("PointLight")
 	light.Color = isPersonalBest and Color3.fromRGB(255, 220, 80) or Color3.fromRGB(255, 255, 255)
-	light.Range = 16
+	light.Range = 20
 	light.Brightness = 0
 	light.Parent = corral
 
@@ -410,6 +475,34 @@ local function playCorralGlow(corral: BasePart, isPersonalBest: boolean)
 
 		confetti:Emit(DeviceProfile.ScaleParticleCount(30))
 		Debris:AddItem(attachment, 2)
+	end
+
+	-- every return (not just personal bests) gets a radial burst so the
+	-- station itself feels satisfying to use, distinct from the rarer
+	-- gold confetti above.
+	local burstAttachment = Instance.new("Attachment")
+	burstAttachment.Position = Vector3.new(0, 2, 0)
+	burstAttachment.Parent = corral
+
+	local burst = Instance.new("ParticleEmitter")
+	burst.Color = ColorSequence.new(Color3.fromRGB(140, 255, 170))
+	burst.Lifetime = NumberRange.new(0.4, 0.7)
+	burst.Speed = NumberRange.new(8, 14)
+	burst.SpreadAngle = Vector2.new(180, 180)
+	burst.Size = NumberSequence.new(0.35)
+	burst.Rate = 0
+	burst.Parent = burstAttachment
+
+	burst:Emit(DeviceProfile.ScaleParticleCount(20))
+	Debris:AddItem(burstAttachment, 1.5)
+
+	-- satisfying scale-punch on the visible RETURN CARTS model itself
+	local returnCartsModel = corral.Parent and corral.Parent:FindFirstChild("RETURN CARTS")
+	local mesh = returnCartsModel and returnCartsModel:FindFirstChildWhichIsA("BasePart")
+	if mesh then
+		local baseSize = mesh.Size
+		mesh.Size = baseSize * 1.06
+		TweenService:Create(mesh, CORRAL_SUCCESS_PUNCH_INFO, { Size = baseSize }):Play()
 	end
 end
 
@@ -510,6 +603,7 @@ function TrainController.Init(initialSnapshot: { trainCount: number?, currentWor
 		local worldFolder = worldsFolder:WaitForChild(worldEntry.FolderName)
 		local corral = worldFolder:WaitForChild("Corral") :: BasePart
 		corralsByWorld[worldEntry.Id] = corral
+		setupCorralAmbient(corral)
 		corral.Touched:Connect(function(hit: BasePart)
 			local character = player.Character
 			if character and hit:IsDescendantOf(character) then

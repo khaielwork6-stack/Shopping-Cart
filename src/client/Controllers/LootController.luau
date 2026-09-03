@@ -10,6 +10,7 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
@@ -26,6 +27,7 @@ type BagEntry = { itemId: string, count: number, sealed: boolean }
 local bag: { BagEntry } = {}
 local previousBagCount = 0
 local nearNPC = false
+local currentNearNPC: Model? = nil
 
 local sellFrame: Frame
 local rowsContainer: ScrollingFrame
@@ -113,6 +115,94 @@ local function playNPCGesture(npc: Model)
 	TweenService:Create(primaryPart, NPC_GESTURE_INFO, { Size = baseSize }):Play()
 end
 
+-- Sell-booth idle ambience, mirroring TrainController's Corral treatment: a
+-- slow warm-gold breathing light plus a lazy upward glint drift, parented to
+-- the NPC's HumanoidRootPart so it sits right at the counter regardless of
+-- which World's booth layout it's attached to. All looping via TweenService
+-- (RepeatCount = -1), no per-frame cost.
+local BOOTH_PULSE_INFO = TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local BOOTH_SELL_BURST_INFO = TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local function setupSellBoothAmbient(npc: Model)
+	local root = npc.PrimaryPart
+	if not root then
+		return
+	end
+
+	local glow = Instance.new("PointLight")
+	glow.Name = "PH_SellBoothAmbientGlow"
+	glow.Color = Color3.fromRGB(255, 210, 90)
+	glow.Range = 14
+	glow.Brightness = 0.8
+	glow.Parent = root
+	TweenService:Create(glow, BOOTH_PULSE_INFO, { Brightness = 2.2 }):Play()
+
+	local glintAttachment = Instance.new("Attachment")
+	glintAttachment.Name = "PH_SellBoothGlintAnchor"
+	glintAttachment.Position = Vector3.new(0, 2, 0)
+	glintAttachment.Parent = root
+
+	local glints = Instance.new("ParticleEmitter")
+	glints.Color = ColorSequence.new(Color3.fromRGB(255, 225, 130))
+	glints.Lifetime = NumberRange.new(1.0, 1.5)
+	glints.Speed = NumberRange.new(1, 2)
+	glints.SpreadAngle = Vector2.new(30, 30)
+	glints.Size = NumberSequence.new(0.2)
+	glints.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	glints.Rate = 3
+	glints.Parent = glintAttachment
+end
+
+-- §8-style "sale confirmed" feedback: a quick gold flash + coin-sparkle
+-- burst at the booth, layered on top of the existing Sell SFX, so a
+-- successful sell reads as a satisfying event rather than a silent number
+-- change in the UI.
+local function playSellBurst(npc: Model)
+	local root = npc.PrimaryPart
+	if not root then
+		return
+	end
+
+	local flash = root:FindFirstChild("PH_SellBoothAmbientGlow") :: PointLight?
+	if flash then
+		local originalBrightness = flash.Brightness
+		local tween = TweenService:Create(flash, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Brightness = 6,
+		})
+		tween:Play()
+		tween.Completed:Connect(function()
+			TweenService:Create(flash, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Brightness = originalBrightness,
+			}):Play()
+		end)
+	end
+
+	local burstAttachment = Instance.new("Attachment")
+	burstAttachment.Position = Vector3.new(0, 2, 0)
+	burstAttachment.Parent = root
+
+	local coins = Instance.new("ParticleEmitter")
+	coins.Color = ColorSequence.new(Color3.fromRGB(255, 220, 80))
+	coins.Lifetime = NumberRange.new(0.5, 0.8)
+	coins.Speed = NumberRange.new(6, 10)
+	coins.SpreadAngle = Vector2.new(180, 60)
+	coins.Size = NumberSequence.new(0.3)
+	coins.Rate = 0
+	coins.Parent = burstAttachment
+
+	coins:Emit(18)
+	Debris:AddItem(burstAttachment, 1.5)
+
+	local primaryPart = npc.PrimaryPart
+	if primaryPart then
+		local baseSize = primaryPart.Size
+		primaryPart.Size = baseSize * 1.1
+		TweenService:Create(primaryPart, BOOTH_SELL_BURST_INFO, { Size = baseSize }):Play()
+	end
+end
+
 local function connectSellNPCs(requestSellLoot: RemoteFunction)
 	local worldsFolder = Workspace:WaitForChild("Worlds")
 	for _, worldEntry in WorldData.Worlds do
@@ -122,12 +212,17 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 			and npc:FindFirstChild("HumanoidRootPart")
 			and npc.HumanoidRootPart:FindFirstChild("SellPrompt") :: ProximityPrompt?
 		if prompt and npc then
+			setupSellBoothAmbient(npc)
 			prompt.PromptShown:Connect(function()
 				nearNPC = true
+				currentNearNPC = npc
 				renderSellButton()
 			end)
 			prompt.PromptHidden:Connect(function()
 				nearNPC = false
+				if currentNearNPC == npc then
+					currentNearNPC = nil
+				end
 				renderSellButton()
 			end)
 			prompt.Triggered:Connect(function()
@@ -145,6 +240,9 @@ local function connectSellNPCs(requestSellLoot: RemoteFunction)
 		local result = requestSellLoot:InvokeServer(false) :: { success: boolean? }
 		if result and result.success then
 			SoundController.PlaySFX("Sell")
+			if currentNearNPC then
+				playSellBurst(currentNearNPC)
+			end
 		else
 			SoundController.PlaySFX("UIDenied")
 		end
