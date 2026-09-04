@@ -24,7 +24,7 @@ local WorldService = {}
 
 local remotesFolder: Folder
 
-local economyServiceCache: { GetLevelState: (Player) -> { totalLevel: number } }? = nil
+local economyServiceCache: { GetLevelState: (Player) -> { totalLevel: number, rebirthCount: number } }? = nil
 local function getEconomyService()
 	if not economyServiceCache then
 		economyServiceCache = require(script.Parent.EconomyService) :: any
@@ -64,18 +64,22 @@ local function pushWorldData(player: Player)
 	playerDataUpdated:FireClient(player, WorldService.GetSnapshot(player))
 end
 
--- �4.6/�4.7: Total Level crossing a threshold unlocks that World instantly,
--- regardless of which World the player is currently in. Polled from
--- CartSpawnService's existing per-frame player loop (�4.1.1), same pattern
--- as PushPowerService.CheckZoneUnlocks. �6.3: a World unlock is one of the
--- two events that force an immediate save alongside the 3-minute autosave.
+-- Lost Cart migration, Phase 2: bonus-World unlocks are now Rebirth-gated,
+-- not Total-Level-gated -- each successful Rebirth is what can cross a
+-- threshold, so this is called directly from RebirthService right after a
+-- rebirth completes (event-driven) instead of polled every frame from
+-- CartSpawnService's per-frame loop -- Rebirth count changes far too rarely
+-- to justify a per-frame check. The Main Lane (IsMainLane) is skipped
+-- entirely: it's always accessible and never fires a fanfare. �6.3: a World
+-- unlock is one of the two events that force an immediate save alongside the
+-- 3-minute autosave.
 function WorldService.CheckWorldUnlocks(player: Player)
 	local unlocked = getUnlockedSet(player)
-	local totalLevel = getEconomyService().GetLevelState(player).totalLevel
+	local rebirthCount = getEconomyService().GetLevelState(player).rebirthCount
 	local changed = false
 
 	for _, world in WorldData.Worlds do
-		if not unlocked[world.Id] and totalLevel >= world.TotalLevelRequirement then
+		if not world.IsMainLane and not unlocked[world.Id] and rebirthCount >= world.RebirthRequirement then
 			unlocked[world.Id] = true
 			changed = true
 
@@ -128,13 +132,23 @@ local function handleRequestEnterWorldPortal(player: Player, destinationWorldId:
 		return { success = false, reason = "RateLimited" }
 	end
 
-	if not WorldService.IsWorldUnlocked(player, destinationWorldId) then
-		return { success = false, reason = "WorldLocked" }
+	-- World 1 rebalance: this map is now the game's actual starting World --
+	-- the old Worlds 1-4 are disabled for now while they get rebuilt from
+	-- scratch as real early/mid-game content (they're late-game-calibrated
+	-- leftovers otherwise). Rebirth still runs and still tracks their
+	-- unlock state (WorldService.CheckWorldUnlocks), it just has no
+	-- player-facing effect until travel is re-enabled. Never disable travel
+	-- back to the Main Lane itself.
+	local destinationEntry = WorldData.GetWorld(destinationWorldId)
+	if not destinationEntry then
+		return { success = false, reason = "InvalidWorld" }
+	end
+	if not destinationEntry.IsMainLane then
+		return { success = false, reason = "WorldsDisabled" }
 	end
 
-	local destination = WorldData.GetWorld(destinationWorldId)
-	if not destination then
-		return { success = false, reason = "InvalidWorld" }
+	if not WorldService.IsWorldUnlocked(player, destinationWorldId) then
+		return { success = false, reason = "WorldLocked" }
 	end
 
 	PlayerDataService.Get(player).currentWorld = destinationWorldId
@@ -157,7 +171,16 @@ function WorldService.Init()
 		return handleRequestEnterWorldPortal(player, destinationWorldId)
 	end
 
-	Players.PlayerAdded:Connect(function(player: Player)
+	-- Phase 2 QA (playtest, Play Solo): PlayerAdded never fires for a player
+	-- already in the game at the moment this Service's Init runs (WorldService
+	-- is the 7th of 11 Services booted) -- the local test player can already
+	-- exist by then, silently skipping both the initial teleport and the
+	-- CharacterAdded re-teleport listener below, leaving them stranded at
+	-- Roblox's generic default spawn instead of the Main Lane. Same
+	-- already-may-exist principle as this function's own Character handling
+	-- one level down, just one level up: handle players already present, in
+	-- addition to (not instead of) every future PlayerAdded.
+	local function onPlayerAdded(player: Player)
 		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters
 		pushWorldData(player)
 
@@ -188,7 +211,12 @@ function WorldService.Init()
 		player.CharacterAdded:Connect(function(character: Model)
 			teleportToWorldZone1(character, WorldService.GetCurrentWorld(player))
 		end)
-	end)
+	end
+
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	for _, player in Players:GetPlayers() do
+		onPlayerAdded(player)
+	end
 
 	print("[WorldService] Init")
 end

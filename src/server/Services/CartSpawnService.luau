@@ -11,11 +11,13 @@
 -- spawn is one of the 6 rarity COVER models only, carrying a Rarity
 -- attribute and nothing else -- no client, including the eventual claimer's
 -- own, ever knows the real CartID until CartRevealed fires at claim
--- finalize. The claim-timing mechanic itself (proximity + Agility-gated
--- dwell) is unchanged from the pre-GDD system -- this project's existing,
--- balanced stand-in for the GDD's "touch" trigger; re-architecting that
--- into literal physics Touched detection wasn't requested and would ripple
--- into the Agility upgrade stat's whole meaning.
+-- finalize.
+--
+-- QA pass 2: claiming is now instant on proximity -- the old Agility-gated
+-- dwell timer (wait a few seconds after touching a cart before it attached)
+-- was removed along with the Agility stat entirely; it read as unresponsive/
+-- laggy rather than a real strategic delay. `tryClaimCart` below resolves
+-- synchronously in the same Heartbeat tick a player enters claim radius.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -39,12 +41,14 @@ local MonetizationService = require(script.Parent.MonetizationService)
 
 local CartSpawnService = {}
 
+-- QA pass 2: no `claiming` lock field anymore -- that existed only to guard
+-- the Agility-gated delay's async window against a double-claim race. Claims
+-- resolve synchronously now, so there's no window for one to occur.
 type ActiveCart = {
 	cover: Model,
 	rarity: EconomyConfig.RarityName,
 	worldId: number,
 	zoneIndex: number,
-	claiming: Player?,
 }
 
 type ZoneRuntime = {
@@ -88,11 +92,30 @@ local function findNearestPlayerInWorld(worldId: number, position: Vector3): Pla
 	return nearest
 end
 
-local function rollRarity(worldId: number, position: Vector3): EconomyConfig.RarityName
+-- World 1 economy rebalance, GDD v3 �12: rarity odds now scale with zone
+-- depth -- a Legendary/Secret should almost never spawn in Zone 1 and
+-- become meaningfully more common by Zone 10+. Previously rarity was
+-- pure-Luck with zero zone term, so every Zone 1-13 had identical odds.
+--
+-- QA pass 2: GDD �12's literal "ZoneLuck = the zone number" only ever
+-- amplifies (zone 1's ZoneLuck=1 leaves the already-nonzero base Legendary/
+-- Secret weights completely unchanged) -- confirmed live: a fresh Zone 1
+-- run showed 2 Legendaries at once, which isn't "almost never." Pivoted at
+-- Zone 5 instead (ZoneLuck = zoneIndex/5) so early Zones actively SUPPRESS
+-- rarity below the base table (LuckReallocate's shift formula runs the same
+-- reallocation in reverse for a sub-1 Luck value -- verified it never goes
+-- negative across Zones 1-13), Zone 5 sits at the original base rate, and
+-- Zones 6-13 ramp up above it. Still cap-bounded at any magnitude
+-- (EconomyConfig.Luck.ShiftCap), per GDD �12's own saturation table.
+local function rollRarity(worldId: number, zoneIndex: number, position: Vector3): EconomyConfig.RarityName
 	local nearestPlayer = findNearestPlayerInWorld(worldId, position)
+	local zoneLuck = zoneIndex / 5
 	local luck = nearestPlayer
-		and IndexService.GetLuck(nearestPlayer) * MonetizationService.GetLuckMultiplier(nearestPlayer)
-		or 1
+			and IndexService.GetLuck(nearestPlayer)
+				* MonetizationService.GetLuckMultiplier(nearestPlayer)
+				* EconomyMath.GetRebirthLuckMultiplier(EconomyService.GetLevelState(nearestPlayer).rebirthCount)
+				* zoneLuck
+		or zoneLuck
 	local weights = EconomyMath.LuckReallocate(luck)
 	return EconomyMath.RollRarity(weights) :: EconomyConfig.RarityName
 end
@@ -275,21 +298,35 @@ local function applyCoverPresentation(cover: Model, rarity: EconomyConfig.Rarity
 			:Play()
 	end
 
-	-- Whole-cover gentle bob + (higher tiers) slow spin, driven the same
-	-- looping-tween way -- the model's own CFrame animates independent of
-	-- the billboard's StudsOffset animation above.
+	-- Whole-cover gentle bob + a real Y-axis spin (every tier gets a subtle
+	-- turn, not just Rare+ -- a perfectly still cover reads as a dead prop
+	-- from across the map even with particles/billboard going). Driven from
+	-- Heartbeat rather than two competing TweenService yoyos: bob and spin
+	-- both touch root.CFrame every frame, and a tweened bob would otherwise
+	-- get clobbered by a tweened spin (or vice versa) fighting for the same
+	-- property. IdleSpinSpeed stays the per-rarity dramatic ramp-up (GDD:
+	-- "higher rarities should have more dramatic animation"); BASE_SPIN_SPEED
+	-- is the floor so even Common (IdleSpinSpeed = 0) still visibly turns.
+	local BASE_SPIN_SPEED = 0.25 -- radians/sec, applied on top of IdleSpinSpeed
 	local baseCFrame = root.CFrame
-	TweenService
-		:Create(
-			root,
-			TweenInfo.new(display.IdleBobSpeed, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-			{ CFrame = baseCFrame * CFrame.new(0, display.IdleBobAmplitude, 0) }
-		)
-		:Play()
+	local spinSpeed = BASE_SPIN_SPEED + display.IdleSpinSpeed
+	local spinAngle = 0
+	local elapsed = 0
+	local heartbeatConnection: RBXScriptConnection
+	heartbeatConnection = RunService.Heartbeat:Connect(function(dt: number)
+		if not root.Parent then
+			heartbeatConnection:Disconnect()
+			return
+		end
+		elapsed += dt
+		spinAngle += spinSpeed * dt
+		local bobOffset = (display.IdleBobAmplitude * 0.5) * (1 - math.cos(elapsed * math.pi / display.IdleBobSpeed))
+		root.CFrame = baseCFrame * CFrame.new(0, bobOffset, 0) * CFrame.Angles(0, spinAngle, 0)
+	end)
 end
 
 local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
-	local rarity = rollRarity(zone.worldId, attachment.WorldPosition)
+	local rarity = rollRarity(zone.worldId, zone.zoneIndex, attachment.WorldPosition)
 	local template = coverTemplates[rarity]
 	if not template then
 		return
@@ -332,7 +369,6 @@ local function spawnCartAt(zone: ZoneRuntime, attachment: Attachment)
 		rarity = rarity,
 		worldId = zone.worldId,
 		zoneIndex = zone.zoneIndex,
-		claiming = nil,
 	}
 
 	if rarity == "Legendary" then
@@ -353,11 +389,13 @@ end
 
 -- Server-authoritative claim: proximity + open Capacity + Zone unlocked for
 -- this player in this World, exclusive-on-touch (§4.1.5 -- no client ever
--- decides who "gets" a cart).
+-- decides who "gets" a cart). QA pass 2: resolves instantly and
+-- synchronously -- no Agility-gated dwell timer anymore (see this Service's
+-- own top-of-file comment).
 local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attachment)
 	local key = cartKey(zone.worldId, zone.zoneIndex, attachment.Name)
 	local entry = activeCarts[key]
-	if not entry or entry.claiming then
+	if not entry then
 		return
 	end
 
@@ -369,71 +407,67 @@ local function tryClaimCart(player: Player, zone: ZoneRuntime, attachment: Attac
 		return
 	end
 
-	entry.claiming = player
+	local rarity = entry.rarity
+	local cartId = rollCartId(rarity, zone.worldId)
+	local claimPosition = entry.cover:GetPivot().Position
 
-	local collectTime = EconomyMath.GetAgilityCollectTime(UpgradeService.GetLevel(player, "agility"))
+	-- Remove from the claimable table immediately (no double-claim), but
+	-- the cover Instance itself stays in Workspace a little longer so
+	-- LostCartRevealController has something to animate -- see this
+	-- Service's own top-of-file comment on why that split exists.
+	activeCarts[key] = nil
 
-	task.delay(collectTime, function()
-		local stillActive = activeCarts[key]
-		if not stillActive or stillActive.claiming ~= player then
-			return -- cart was already resolved/removed
+	-- Lost Cart GDD v3 �5.3: SizeRoll is rolled once, here, server-side --
+	-- never client-supplied -- so the cart's weight is fixed for its whole
+	-- lifetime in the train regardless of how many times Load gets read.
+	local sizeRoll = EconomyConfig.CartWeight.SizeRollMin
+		+ math.random() * (EconomyConfig.CartWeight.SizeRollMax - EconomyConfig.CartWeight.SizeRollMin)
+	local weight = EconomyMath.GetCartWeight(rarity, zone.zoneIndex, sizeRoll)
+
+	EconomyService.AddCartToTrain(
+		player,
+		{ rarity = rarity, world = zone.worldId, zone = zone.zoneIndex, cartId = cartId, weight = weight }
+	)
+
+	local cartEntry = cartId and LostCartData.GetCart(cartId)
+	local isNew = cartId ~= nil and IndexService.RecordDiscovery(player, cartId)
+	local display = CartData.RarityDisplay[rarity]
+
+	local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
+	cartClaimed:FireClient(player, { rarity = rarity })
+
+	local cartRevealed = remotesFolder:FindFirstChild("CartRevealed") :: RemoteEvent
+	cartRevealed:FireClient(player, {
+		cover = entry.cover,
+		cartId = cartId,
+		displayName = cartEntry and cartEntry.DisplayName or "???",
+		rarity = rarity,
+		isNew = isNew == true,
+		mutation = nil, -- Lost Cart GDD Phase 4, not built yet -- see MutationData's own comment
+	})
+
+	if rarity == "Legendary" then
+		firePlayersInWorld(zone.worldId, "LegendaryCartClaimed", { position = claimPosition })
+	end
+
+	-- Give the claiming client's reveal sequence time to actually see
+	-- the cover before it's gone, then clean up + schedule the respawn
+	-- exactly like before.
+	local revealWindow = (display and display.RevealDuration or 0.3) + 0.35
+	task.delay(revealWindow, function()
+		if entry.cover.Parent then
+			entry.cover:Destroy()
 		end
-
-		if not player.Parent then
-			-- player disconnected mid-collect; release so someone else can claim it
-			stillActive.claiming = nil
-			return
-		end
-
-		local rarity = stillActive.rarity
-		local cartId = rollCartId(rarity, zone.worldId)
-		local claimPosition = stillActive.cover:GetPivot().Position
-
-		-- Remove from the claimable table immediately (no double-claim), but
-		-- the cover Instance itself stays in Workspace a little longer so
-		-- LostCartRevealController has something to animate -- see this
-		-- Service's own top-of-file comment on why that split exists.
-		activeCarts[key] = nil
-
-		EconomyService.AddCartToTrain(player, { rarity = rarity, world = zone.worldId, zone = zone.zoneIndex, cartId = cartId })
-
-		local cartEntry = cartId and LostCartData.GetCart(cartId)
-		local isNew = cartId ~= nil and IndexService.RecordDiscovery(player, cartId)
-		local display = CartData.RarityDisplay[rarity]
-
-		local cartClaimed = remotesFolder:FindFirstChild("CartClaimed") :: RemoteEvent
-		cartClaimed:FireClient(player, { rarity = rarity })
-
-		local cartRevealed = remotesFolder:FindFirstChild("CartRevealed") :: RemoteEvent
-		cartRevealed:FireClient(player, {
-			cover = stillActive.cover,
-			cartId = cartId,
-			displayName = cartEntry and cartEntry.DisplayName or "???",
-			rarity = rarity,
-			isNew = isNew == true,
-			mutation = nil, -- Lost Cart GDD Phase 4, not built yet -- see MutationData's own comment
-		})
-
-		if rarity == "Legendary" then
-			firePlayersInWorld(zone.worldId, "LegendaryCartClaimed", { position = claimPosition })
-		end
-
-		-- Give the claiming client's reveal sequence time to actually see
-		-- the cover before it's gone, then clean up + schedule the respawn
-		-- exactly like before.
-		local revealWindow = (display and display.RevealDuration or 0.3) + 0.35
-		task.delay(revealWindow, function()
-			if stillActive.cover.Parent then
-				stillActive.cover:Destroy()
-			end
-			despawnAndScheduleRespawn(zone, attachment)
-		end)
+		despawnAndScheduleRespawn(zone, attachment)
 	end)
 end
 
 local function heartbeatCheck()
 	for _, player in Players:GetPlayers() do
-		WorldService.CheckWorldUnlocks(player)
+		-- World unlocks are now Rebirth-gated (Phase 2), not Total-Level-gated --
+		-- Rebirth count only changes on an explicit RequestRebirth call, so
+		-- WorldService.CheckWorldUnlocks is triggered from RebirthService
+		-- directly instead of polled here every frame.
 		PushPowerService.CheckZoneUnlocks(player)
 
 		local character = player.Character
@@ -451,7 +485,7 @@ local function heartbeatCheck()
 				for _, zone in currentWorldZones do
 					for _, attachment in zone.attachments do
 						local entry = activeCarts[cartKey(zone.worldId, zone.zoneIndex, attachment.Name)]
-						if entry and not entry.claiming then
+						if entry then
 							local distance = (root.Position - attachment.WorldPosition).Magnitude
 							if distance <= claimRadius then
 								tryClaimCart(player, zone, attachment)
@@ -488,13 +522,15 @@ function CartSpawnService.Init()
 		coverTemplates[rarity] = template
 	end
 
-	local zonesPerWorld = EconomyConfig.Cart.ZonesPerWorld
 	for _, worldEntry in WorldData.Worlds do
 		local worldFolder = Workspace.Worlds:FindFirstChild(worldEntry.FolderName) :: Folder
 		local worldZones = {}
 		zonesByWorld[worldEntry.Id] = worldZones
 
-		for zoneIndex = 1, zonesPerWorld do
+		-- Phase 2: per-World zone count, not a shared global -- the Main Lane
+		-- (World5) now runs 13 Zones while the Rebirth-gated bonus Worlds
+		-- (1-4) stay at their original 8.
+		for zoneIndex = 1, worldEntry.ZoneCount do
 			local zone = buildZoneRuntime(worldEntry.Id, worldFolder, zoneIndex)
 			table.insert(worldZones, zone)
 			for _, attachment in zone.attachments do

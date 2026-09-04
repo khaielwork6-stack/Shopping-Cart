@@ -29,6 +29,7 @@ local BOOT_ORDER = {
 	{ Name = "SoundController", Module = script.Controllers.SoundController },
 	{ Name = "UIAnimationController", Module = script.Controllers.UIAnimationController },
 	{ Name = "UIController", Module = script.Controllers.UIController },
+	{ Name = "CapacitySpeedHUDController", Module = script.Controllers.CapacitySpeedHUDController },
 	{ Name = "WorldController", Module = script.Controllers.WorldController },
 	{ Name = "InputController", Module = script.Controllers.InputController },
 	{ Name = "TrainController", Module = script.Controllers.TrainController },
@@ -38,6 +39,7 @@ local BOOT_ORDER = {
 	{ Name = "IndexController", Module = script.Controllers.IndexController },
 	{ Name = "MonetizationController", Module = script.Controllers.MonetizationController },
 	{ Name = "ShopController", Module = script.Controllers.ShopController },
+	{ Name = "BatController", Module = script.Controllers.BatController },
 }
 
 print("[Client Main] Booting controllers...")

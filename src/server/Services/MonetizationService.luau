@@ -122,7 +122,6 @@ local function grantStarterPack(player: Player)
 	data.cash += pack.Cash
 	data.gems += pack.Gems
 	data.upgrades.capacity += pack.CapacityLevels
-	data.upgrades.agility += pack.AgilityLevels
 end
 
 -- §6.6/§11: ProcessReceipt must be idempotent -- a receipt can be retried

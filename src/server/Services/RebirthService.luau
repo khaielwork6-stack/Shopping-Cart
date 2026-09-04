@@ -13,6 +13,7 @@ local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local EconomyService = require(script.Parent.EconomyService)
 local UpgradeService = require(script.Parent.UpgradeService)
+local WorldService = require(script.Parent.WorldService)
 
 local RebirthService = {}
 
@@ -48,11 +49,17 @@ local function handleRequestRebirth(player: Player)
 	local newRebirthCount = EconomyService.PerformRebirthReset(player)
 	UpgradeService.ResetPushPower(player)
 
+	-- Lost Cart migration Phase 2: bonus-World unlocks are Rebirth-gated now,
+	-- not Total-Level-gated -- this replaces the old per-frame poll as the
+	-- one and only place a bonus World can newly unlock.
+	WorldService.CheckWorldUnlocks(player)
+
 	return {
 		success = true,
 		rebirthCount = newRebirthCount,
 		pushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(newRebirthCount),
 		cashMultiplier = EconomyMath.GetRebirthCashMultiplier(newRebirthCount),
+		luckMultiplier = EconomyMath.GetRebirthLuckMultiplier(newRebirthCount),
 	}
 end
 

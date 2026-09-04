@@ -45,29 +45,53 @@ function EconomyMath.GetRebirthCashMultiplier(completedRebirths: number): number
 	return EconomyConfig.Rebirth.CashMultiplierBase + EconomyConfig.Rebirth.CashMultiplierPerRebirth * completedRebirths
 end
 
--- �3.4 Cart Cash Value
-function EconomyMath.GetWorldCashBase(world: number): number
-	return EconomyConfig.Cart.WorldCashBaseStart * (EconomyConfig.Cart.WorldCashBaseGrowth ^ (world - 1))
+-- Lost Cart migration Phase 2: Rebirth now also grows Luck, alongside Cash
+-- and Push Power -- same linear shape as the other two.
+function EconomyMath.GetRebirthLuckMultiplier(completedRebirths: number): number
+	return EconomyConfig.Rebirth.LuckMultiplierBase + EconomyConfig.Rebirth.LuckMultiplierPerRebirth * completedRebirths
 end
 
-function EconomyMath.GetZoneValueMultiplier(zone: number): number
-	return EconomyConfig.Cart.ZoneValueMultiplierGrowth ^ (zone - 1)
-end
-
--- �3.4.3 Cart Cash Value -- full formula for Claude Code
-function EconomyMath.GetCartValue(world: number, zone: number, rarity: RarityName, rebirthCashMult: number): number
-	local worldBase = EconomyMath.GetWorldCashBase(world)
-	local zoneMult = EconomyMath.GetZoneValueMultiplier(zone)
+-- World 1 economy rebalance: zone-only now -- see EconomyConfig.Cart's own
+-- comment on why the old world-scaling term was a bug, not a design choice.
+-- CartValue(zone, rarity) = 5 * 1.58^(zone-1) * RarityMult * RebirthMult,
+-- matching GDD v3 �5.4's formula shape (which never had a world term).
+function EconomyMath.GetCartValue(zone: number, rarity: RarityName, rebirthCashMult: number): number
+	local zoneMult = EconomyConfig.Cart.CashZoneGrowth ^ (zone - 1)
 	local rarityMult = EconomyConfig.Rarity[rarity].ValueMultiplier
-	local base = worldBase * zoneMult * rarityMult
+	local base = EconomyConfig.Cart.Zone1CashBase * zoneMult * rarityMult
 	return math.floor(base * rebirthCashMult + 0.5)
 end
 
--- �3.5.1 Push Power Requirement
-function EconomyMath.GetPowerRequirement(world: number, zone: number): number
-	return EconomyConfig.PushPower.RequirementBase
-		* (EconomyConfig.PushPower.RequirementWorldGrowth ^ (world - 1))
-		* (EconomyConfig.PushPower.RequirementZoneGrowth ^ (zone - 1))
+-- Lost Cart GDD v3 �5.3: CartWeight = RarityBaseKg * SizeRoll * 1.58^(zone-1).
+-- sizeRoll is rolled once server-side at claim time and passed in here (never
+-- re-rolled), so a cart's weight is stable for its lifetime in the train.
+function EconomyMath.GetCartWeight(rarity: RarityName, zoneIndex: number, sizeRoll: number): number
+	local baseKg = EconomyConfig.CartWeight.RarityBaseKg[rarity]
+	return baseKg * sizeRoll * (EconomyConfig.CartWeight.ZoneGrowth ^ (zoneIndex - 1))
+end
+
+-- Lost Cart GDD v3 �6.3: PullPower(level) = 60 * 1.18^level, over the same
+-- `pushPower` upgrade level the legacy zone-frontier formulas below also read.
+function EconomyMath.GetPullPowerKg(pushPowerLevel: number): number
+	return EconomyConfig.PullPower.BaseKg * (EconomyConfig.PullPower.GrowthPerLevel ^ pushPowerLevel)
+end
+
+-- Lost Cart GDD v3 �6.1: the real Load-vs-PullPower train speed curve.
+-- "Never a hard stop" -- overloading to any degree still floors at
+-- MinSpeedFactor rather than stopping the player outright.
+function EconomyMath.GetTrainSpeedFactor(load: number, pullPowerKg: number): number
+	if load <= pullPowerKg or pullPowerKg <= 0 then
+		return 1.0
+	end
+	local overloadFraction = (load - pullPowerKg) / pullPowerKg
+	return math.max(EconomyConfig.TrainSpeed.MinSpeedFactor, 1.0 - EconomyConfig.TrainSpeed.OverloadCoefficient * overloadFraction)
+end
+
+-- �3.5.1 Push Power Requirement -- zone-only, linear (not exponential) so it
+-- paces evenly against Effective Push Power's own linear (1+level) shape --
+-- see EconomyConfig.PushPower's own comment on both rebalance passes.
+function EconomyMath.GetPowerRequirement(zone: number): number
+	return EconomyConfig.PushPower.RequirementBase + EconomyConfig.PushPower.RequirementPerZone * (zone - 1)
 end
 
 -- �3.5.3 Effective Push Power = (1 + PushPowerLevel) * RebirthPushPowerMultiplier * IndexBonus
@@ -99,10 +123,6 @@ function EconomyMath.GetUpgradeCost(stat: UpgradeStatName, level: number): numbe
 end
 
 -- �3.7.1 Per-stat effect helpers
-function EconomyMath.GetAgilityCollectTime(agilityLevel: number): number
-	local cfg = EconomyConfig.UpgradeEffects.agility
-	return cfg.CollectTimeBase * (cfg.CollectTimeDecay ^ agilityLevel)
-end
 
 function EconomyMath.GetTrainCapacity(capacityLevel: number): number
 	return EconomyConfig.UpgradeEffects.capacity.BaseCapacity + capacityLevel
@@ -188,6 +208,25 @@ end
 -- �4.1.1 Per-Zone active cart spawn cap
 function EconomyMath.GetMaxActiveCarts(zoneIndexWithinWorld: number): number
 	return EconomyConfig.Spawn.MaxActiveCartsBase + EconomyConfig.Spawn.MaxActiveCartsPerZoneIndex * zoneIndexWithinWorld
+end
+
+-- Phase 4 �9.1: Base slot count grows with Rebirth, same linear shape as
+-- every other Rebirth-scaled quantity in this project.
+function EconomyMath.GetBaseSlotCount(rebirthCount: number): number
+	return EconomyConfig.Base.BaseSlotCount + EconomyConfig.Base.SlotsPerRebirth * rebirthCount
+end
+
+-- Phase 4 �8.3: IncomePerSec derived from the item's existing SellValue via
+-- the GDD's own ratio, inverted -- never a second per-item number to keep
+-- in sync with SellValue by hand.
+function EconomyMath.GetItemIncomePerSec(sellValue: number): number
+	return sellValue / EconomyConfig.Base.IncomeSellValueDivisor
+end
+
+-- Phase 4 �9.2: how long a Base stays Locked before its next Vulnerable
+-- window, scaled by Rebirth.
+function EconomyMath.GetBaseLockSeconds(rebirthCount: number): number
+	return EconomyConfig.Base.LockSeconds + EconomyConfig.Base.LockSecondsPerRebirth * rebirthCount
 end
 
 return EconomyMath

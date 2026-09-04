@@ -16,11 +16,6 @@ UpgradeData.Display = ({
 		Description = "Increases how many carts your train can carry.",
 		IconName = "PH_Icon_Capacity",
 	},
-	agility = {
-		DisplayName = "Agility",
-		Description = "Reduces the time it takes to collect a cart.",
-		IconName = "PH_Icon_Agility",
-	},
 	mobility = {
 		DisplayName = "Mobility",
 		Description = "Increases your walk speed.",

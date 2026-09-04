@@ -15,9 +15,9 @@
 --
 -- BaseValue here is the GDD schema's own field (display/reference data for
 -- a future Index card), deliberately NOT wired into the actual cash-value
--- calculation -- this project's existing cash economy
--- (EconomyMath.GetCartValue, world/zone/rarity-driven) is proven-balanced
--- and out of scope to rebuild for this pass. Rebalance/wire it later if the
+-- calculation -- this project's existing cash economy (EconomyMath.
+-- GetCartValue, zone/rarity-driven per the World 1 economy rebalance) is
+-- out of scope to rebuild for this pass. Rebalance/wire it later if the
 -- GDD's per-cart-value economy is explicitly requested.
 
 local EconomyConfig = require(script.Parent.EconomyConfig)

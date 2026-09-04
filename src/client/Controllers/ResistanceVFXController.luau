@@ -25,15 +25,13 @@ local SoundController = require(script.Parent.SoundController)
 
 local ResistanceVFXController = {}
 
-local ZONES_PER_WORLD = EconomyConfig.Cart.ZonesPerWorld
-
 -- �4.2's named thresholds.
 local HEAVY_THRESHOLD = 0.35
 local LIGHT_THRESHOLD = 0.85
 
 local player = Players.LocalPlayer
 local cachedPushPowerLevel = 0
-local cachedCurrentWorld = 1
+local cachedCurrentWorld = WorldData.GetMainLane().Id
 local cachedRebirthPushPowerMultiplier = 1
 local cachedIndexPushPowerBonus = 1
 local dragEmitter: ParticleEmitter?
@@ -89,15 +87,19 @@ local function onHeartbeat()
 	end
 
 	-- Z-banding is identical across every World (only X differs, per-World),
-	-- so this needs no World-specific adjustment -- only which World's
-	-- PowerRequirement table applies does.
-	local zoneIndex = ZoneData.GetZoneIndexFromWorldZ(root.Position.Z, ZONES_PER_WORLD)
+	-- so this needs no World-specific adjustment for positioning -- only
+	-- zone COUNT (Phase 2: the Main Lane runs 13, bonus Worlds run 8)
+	-- varies. World 1 economy rebalance: PowerRequirement itself is
+	-- zone-only now, World no longer factors into it at all.
+	local currentWorldEntry = WorldData.GetWorld(cachedCurrentWorld)
+	local zoneCount = currentWorldEntry and currentWorldEntry.ZoneCount or EconomyConfig.Cart.ZonesPerWorld
+	local zoneIndex = ZoneData.GetZoneIndexFromWorldZ(root.Position.Z, zoneCount)
 	local effectivePushPower = EconomyMath.GetEffectivePushPower(
 		cachedPushPowerLevel,
 		cachedRebirthPushPowerMultiplier,
 		cachedIndexPushPowerBonus
 	)
-	local requirement = EconomyMath.GetPowerRequirement(cachedCurrentWorld, zoneIndex)
+	local requirement = EconomyMath.GetPowerRequirement(zoneIndex)
 	local speedFactor = EconomyMath.GetSpeedFactor(effectivePushPower, requirement)
 
 	applyResistanceVFX(root, speedFactor)

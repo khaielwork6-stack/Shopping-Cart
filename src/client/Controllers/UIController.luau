@@ -35,7 +35,7 @@ local function tweenFillWidth(fill: Frame, targetScale: number)
 	TweenService:Create(fill, FILL_TWEEN_INFO, { Size = UDim2.new(targetScale, 0, fill.Size.Y.Scale, fill.Size.Y.Offset) }):Play()
 end
 
-local STAT_ORDER: { EconomyConfig.UpgradeStatName } = { "capacity", "agility", "mobility", "range", "pushPower" }
+local STAT_ORDER: { EconomyConfig.UpgradeStatName } = { "capacity", "mobility", "range", "pushPower" }
 
 type PlayerDataCache = {
 	cash: number,
@@ -47,13 +47,14 @@ type PlayerDataCache = {
 	rebirthCount: number,
 	rebirthPushPowerMultiplier: number,
 	rebirthCashMultiplier: number,
+	rebirthLuckMultiplier: number,
 	currentWorld: number,
 	settings: { musicVolume: number, sfxVolume: number },
 }
 
 local cache: PlayerDataCache = {
 	cash = 0,
-	upgrades = { capacity = 0, agility = 0, mobility = 0, range = 0, pushPower = 0 },
+	upgrades = { capacity = 0, mobility = 0, range = 0, pushPower = 0 },
 	currentLevel = 1,
 	currentXP = 0,
 	xpForNextLevel = 20,
@@ -61,7 +62,8 @@ local cache: PlayerDataCache = {
 	rebirthCount = 0,
 	rebirthPushPowerMultiplier = 1,
 	rebirthCashMultiplier = 1,
-	currentWorld = 1,
+	rebirthLuckMultiplier = 1,
+	currentWorld = WorldData.GetMainLane().Id,
 	settings = { musicVolume = 0.5, sfxVolume = 0.8 },
 }
 
@@ -403,6 +405,7 @@ type DataUpdate = {
 	rebirthCount: number?,
 	rebirthPushPowerMultiplier: number?,
 	rebirthCashMultiplier: number?,
+	rebirthLuckMultiplier: number?,
 	currentWorld: number?,
 	settings: { musicVolume: number?, sfxVolume: number? }?,
 }
@@ -444,6 +447,9 @@ local function applyDataUpdate(data: DataUpdate, isInitial: boolean?)
 	end
 	if data.rebirthCashMultiplier ~= nil then
 		cache.rebirthCashMultiplier = data.rebirthCashMultiplier
+	end
+	if data.rebirthLuckMultiplier ~= nil then
+		cache.rebirthLuckMultiplier = data.rebirthLuckMultiplier
 	end
 	if data.currentWorld ~= nil then
 		cache.currentWorld = data.currentWorld

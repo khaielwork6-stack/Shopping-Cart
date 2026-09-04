@@ -33,6 +33,12 @@ local BOOT_ORDER = {
 	{ Name = "LootService", Module = script.Services.LootService },
 	{ Name = "IndexService", Module = script.Services.IndexService },
 	{ Name = "LeaderboardService", Module = script.Services.LeaderboardService },
+	-- Phase 4: reads/writes lootBag (LootService) and grants Cash
+	-- (EconomyService) -- boots after both.
+	{ Name = "BaseService", Module = script.Services.BaseService },
+	-- Phase 5: reads player level (PlayerDataService) and drops carts on hit
+	-- (EconomyService) -- boots after both.
+	{ Name = "BatService", Module = script.Services.BatService },
 }
 
 print("[Main] Booting services...")
@@ -69,6 +75,7 @@ local WorldService = require(script.Services.WorldService)
 local LootService = require(script.Services.LootService)
 local IndexService = require(script.Services.IndexService)
 local PushPowerService = require(script.Services.PushPowerService)
+local BaseService = require(script.Services.BaseService)
 
 local remotesFolder = RemotesSetup.CreateAll()
 local requestPlayerDataSnapshot = remotesFolder:FindFirstChild("RequestPlayerDataSnapshot") :: RemoteFunction
@@ -83,6 +90,7 @@ requestPlayerDataSnapshot.OnServerInvoke = function(player: Player)
 		LootService.GetSnapshot,
 		IndexService.GetSnapshot,
 		PushPowerService.GetSnapshot,
+		BaseService.GetSnapshot,
 	} do
 		for key, value in getSnapshot(player) do
 			snapshot[key] = value

@@ -36,7 +36,7 @@ local LootService = {}
 
 local remotesFolder: Folder
 
-local economyServiceCache: { AddCash: (Player, number) -> () }? = nil
+local economyServiceCache: { AddCash: (Player, number) -> (), GetLevelState: (Player) -> { rebirthCount: number } }? = nil
 local function getEconomyService()
 	if not economyServiceCache then
 		economyServiceCache = require(script.Parent.EconomyService) :: any
@@ -92,6 +92,30 @@ local function addToBag(player: Player, itemId: string, sealed: boolean, count: 
 	return true
 end
 
+-- Phase 4 �9: public API consumed by BaseService, so placing/removing a
+-- Base item goes through this Service's single bag-mutation path (�6.6)
+-- rather than BaseService reaching into `lootBag` directly.
+function LootService.ReturnItemToBag(player: Player, itemId: string): boolean
+	return addToBag(player, itemId, false, 1)
+end
+
+-- Only ever removes an UNSEALED copy -- a sealed item must be Opened first,
+-- same rule as selling one.
+function LootService.TakeItemFromBag(player: Player, itemId: string): boolean
+	local bag = getBag(player)
+	for i, entry in bag do
+		if entry.itemId == itemId and not entry.sealed and entry.count > 0 then
+			entry.count -= 1
+			if entry.count <= 0 then
+				table.remove(bag, i)
+			end
+			pushBagData(player)
+			return true
+		end
+	end
+	return false
+end
+
 local function rollDropOnly(luck: number): boolean
 	local dropChance = EconomyMath.GetLootDropChance(luck)
 	return math.random() < dropChance
@@ -100,7 +124,13 @@ end
 -- �4.5: per-cart Loot roll, independent of the Cash rarity roll. Called by
 -- EconomyService once per returned cart, at the moment of return.
 function LootService.RollForCart(player: Player)
-	local luck = IndexService.GetLuck(player) * getMonetizationService().GetLuckMultiplier(player)
+	-- Lost Cart migration Phase 2: Rebirth now also grows Luck (rebirth's own
+	-- "changing rebirth completely" ask), folded in the same way the
+	-- Monetization Luck gamepass already is.
+	local rebirthCount = getEconomyService().GetLevelState(player).rebirthCount
+	local luck = IndexService.GetLuck(player)
+		* getMonetizationService().GetLuckMultiplier(player)
+		* EconomyMath.GetRebirthLuckMultiplier(rebirthCount)
 
 	if not rollDropOnly(luck) then
 		return

@@ -24,18 +24,24 @@
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
+local CartData = require(ReplicatedStorage.Shared.Configs.CartData)
+local LostCartData = require(ReplicatedStorage.Shared.Configs.LostCartData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
+local CartVisuals = require(ReplicatedStorage.Shared.Modules.CartVisuals)
+local CartTemplateLookup = require(ReplicatedStorage.Shared.Modules.CartTemplateLookup)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local PushPowerService = require(script.Parent.PushPowerService)
 local WorldService = require(script.Parent.WorldService)
 local LootService = require(script.Parent.LootService)
 local MonetizationService = require(script.Parent.MonetizationService)
+local UpgradeService = require(script.Parent.UpgradeService)
 
 export type TrainItem = {
 	rarity: string,
@@ -45,6 +51,16 @@ export type TrainItem = {
 	-- the train's visual model. Optional so any pre-Lost-Cart-system caller
 	-- (none currently) still type-checks; cash value is still computed from
 	-- world/zone/rarity only (see LostCartData's own comment on why).
+	weight: number, -- Lost Cart GDD v3 �5.3: real kg, rolled once at claim time (Phase 3)
+}
+
+-- Lost Cart GDD v3 �6.2: a dumped cart sitting in the world, grabbable by
+-- anyone (after a brief grace window) for a limited time.
+type DroppedCart = {
+	model: Model,
+	item: TrainItem,
+	claimableAt: number,
+	expiresAt: number,
 }
 
 export type LevelState = {
@@ -60,6 +76,7 @@ local DWELL_STEP_SECONDS = 0.1
 
 local trains: { [Player]: { TrainItem } } = {}
 local isReturning: { [Player]: boolean } = {}
+local droppedCarts: { [Model]: DroppedCart } = {}
 local remotesFolder: Folder
 
 local function getTrain(player: Player): { TrainItem }
@@ -87,6 +104,7 @@ function EconomyService.GetSnapshot(player: Player): { [string]: any }
 		rebirthCount = data.rebirthCount,
 		rebirthPushPowerMultiplier = EconomyMath.GetRebirthPushPowerMultiplier(data.rebirthCount),
 		rebirthCashMultiplier = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount),
+		rebirthLuckMultiplier = EconomyMath.GetRebirthLuckMultiplier(data.rebirthCount),
 	}
 end
 
@@ -103,6 +121,18 @@ end
 function EconomyService.AddCartToTrain(player: Player, item: TrainItem)
 	table.insert(getTrain(player), item)
 	pushPlayerData(player)
+	UpgradeService.RefreshWalkSpeed(player) -- Lost Cart GDD v3 �6.1: Load just went up
+end
+
+-- Lost Cart GDD v3 �6.1: total real kg currently being hauled -- the Load
+-- term in the Load-vs-PullPower speed curve. Public API consumed by
+-- UpgradeService.RefreshWalkSpeed.
+function EconomyService.GetTrainLoad(player: Player): number
+	local total = 0
+	for _, item in getTrain(player) do
+		total += item.weight
+	end
+	return total
 end
 
 -- Public API consumed by UpgradeService (and any future currency sink) --
@@ -174,7 +204,7 @@ function EconomyService.LiquidateTrainOnLeave(player: Player)
 	local rebirthCashMult = EconomyMath.GetRebirthCashMultiplier(data.rebirthCount)
 	local total = 0
 	for _, item in train do
-		total += EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, rebirthCashMult)
+		total += EconomyMath.GetCartValue(item.zone, item.rarity :: any, rebirthCashMult)
 	end
 
 	data.cash += total
@@ -235,19 +265,17 @@ end
 -- �4.2: SpeedFactor over the highest-Zone item actually being carried --
 -- a train made entirely of Zone 1 cargo returns at full speed regardless of
 -- the player's current frontier; a train including frontier-Zone cargo is
--- gated by that Zone's requirement. Trains only ever contain cargo from a
--- single World in practice (claiming is gated to the player's current
--- World, �3.5.4/Phase 5), but this compares (world, zone) pairs directly
--- rather than assuming that to stay correct if that ever changes.
+-- gated by that Zone's requirement. World 1 economy rebalance: zone-only
+-- now (see EconomyConfig.PushPower's own comment) -- World no longer
+-- factors into this at all.
 local function getReturnSpeedFactor(player: Player, train: { TrainItem }): number
-	local maxWorld, maxZone = 1, 1
+	local maxZone = 1
 	for _, item in train do
-		if item.world > maxWorld or (item.world == maxWorld and item.zone > maxZone) then
-			maxWorld = item.world
+		if item.zone > maxZone then
 			maxZone = item.zone
 		end
 	end
-	return PushPowerService.GetSpeedFactorForZone(player, maxWorld, maxZone)
+	return PushPowerService.GetSpeedFactorForZone(player, maxZone)
 end
 
 local function handleRequestReturnCarts(player: Player)
@@ -303,7 +331,7 @@ local function handleRequestReturnCarts(player: Player)
 	local xpEarned = 0
 	local cartsReturned = #train
 	for _, item in train do
-		local cashValue = EconomyMath.GetCartValue(item.world, item.zone, item.rarity :: any, cashMultiplier)
+		local cashValue = EconomyMath.GetCartValue(item.zone, item.rarity :: any, cashMultiplier)
 		total += cashValue
 		xpEarned += EconomyMath.GetXPFromCashValue(cashValue)
 
@@ -322,6 +350,7 @@ local function handleRequestReturnCarts(player: Player)
 	awardXPAndLevelUp(data, xpEarned)
 	isReturning[player] = nil
 	pushPlayerData(player)
+	UpgradeService.RefreshWalkSpeed(player) -- Lost Cart GDD v3 �6.1: Load just dropped to 0
 
 	return {
 		success = true,
@@ -332,6 +361,128 @@ local function handleRequestReturnCarts(player: Player)
 	}
 end
 
+-- Lost Cart GDD v3 �6.2/�10.2: unhooks the back cart (the last one inserted
+-- -- matches TrainController's own trailing order, and its setTrainCount
+-- shrink-from-the-end logic, so the visual train shrinks correctly for free
+-- off the pushPlayerData below). Drops it in place as a real, grabbable
+-- pickup for a limited time. Shared by the voluntary dump (§6.2, a longer
+-- 20s grab window) and a Phase 5 bat hit landing on a hauling player
+-- (§10.2, a shorter 15s window) -- same mechanic, two different callers,
+-- one implementation.
+local function dropLastCart(player: Player, grabDelaySeconds: number, despawnSeconds: number): boolean
+	local train = getTrain(player)
+	local item = table.remove(train)
+	if not item then
+		return false
+	end
+
+	pushPlayerData(player)
+	UpgradeService.RefreshWalkSpeed(player) -- Load just dropped
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return true -- disconnected mid-request; the cart is simply lost, not stranded in the void
+	end
+
+	-- Same shared visual modules TrainController already uses for the train
+	-- itself (both live under ReplicatedStorage, safe to use server-side) --
+	-- a dumped cart is already revealed, so it shows its real model, not a
+	-- mystery cover.
+	local template = CartTemplateLookup.Get(item.cartId)
+	local model = CartVisuals.PrepareCart(template)
+	local body = model.PrimaryPart :: BasePart
+	body.CFrame = root.CFrame
+	model.Parent = Workspace
+
+	local now = os.clock()
+	droppedCarts[model] = {
+		model = model,
+		item = item,
+		claimableAt = now + grabDelaySeconds,
+		expiresAt = now + despawnSeconds,
+	}
+	return true
+end
+
+local function handleRequestDumpCart(player: Player)
+	if not RateLimiter.Allow(player, "RequestDumpCart", 5) then
+		return
+	end
+	dropLastCart(player, EconomyConfig.Dump.GrabDelaySeconds, EconomyConfig.Dump.DespawnSeconds)
+end
+
+-- Phase 5 public API consumed by BatService -- a bat hit landing on a
+-- hauling player drops their last cart the same way a voluntary dump does,
+-- just with §10.2's own (shorter) grab window instead of §6.2's. Returns
+-- whether a cart was actually dropped (false if the train was empty), so
+-- BatService can skip firing knockback/VFX cues that only make sense when
+-- something visibly hits the ground.
+function EconomyService.DropLastCartFromHit(player: Player): boolean
+	return dropLastCart(player, EconomyConfig.Bat.CartDropGrabSeconds, EconomyConfig.Dump.DespawnSeconds)
+end
+
+-- Proximity-based, not .Touched -- CartVisuals.PrepareCart sets CanTouch =
+-- false on every part ("trains are visual, not physical"), so Touched would
+-- never fire. Matches CartSpawnService.heartbeatCheck's own established
+-- per-frame-proximity convention for world pickups.
+local function dumpedCartHeartbeat()
+	local now = os.clock()
+
+	for model, dropped in droppedCarts do
+		if now >= dropped.expiresAt then
+			droppedCarts[model] = nil
+			model:Destroy()
+			continue
+		end
+
+		if now < dropped.claimableAt then
+			continue
+		end
+
+		local body = model.PrimaryPart :: BasePart?
+		if not body then
+			continue
+		end
+
+		for _, player in Players:GetPlayers() do
+			local character = player.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if root and (root.Position - body.Position).Magnitude <= EconomyConfig.Collection.BaseClaimRadius then
+				droppedCarts[model] = nil -- no double-claim
+
+				EconomyService.AddCartToTrain(player, dropped.item)
+
+				-- Same remote/payload shape CartSpawnService.tryClaimCart fires
+				-- on an original claim, so LostCartRevealController's existing
+				-- compress/burst/reveal ceremony plays anchored at the real
+				-- drop position with zero new client code, then hands off into
+				-- the grabber's train exactly like a fresh claim.
+				local cartEntry = dropped.item.cartId and LostCartData.GetCart(dropped.item.cartId)
+				local cartRevealed = remotesFolder:FindFirstChild("CartRevealed") :: RemoteEvent
+				cartRevealed:FireClient(player, {
+					cover = model,
+					cartId = dropped.item.cartId,
+					displayName = cartEntry and cartEntry.DisplayName or "???",
+					rarity = dropped.item.rarity,
+					isNew = false,
+					mutation = nil,
+				})
+
+				local display = CartData.RarityDisplay[dropped.item.rarity :: any]
+				local revealWindow = (display and display.RevealDuration or 0.3) + 0.35
+				task.delay(revealWindow, function()
+					if model.Parent then
+						model:Destroy()
+					end
+				end)
+
+				break -- claimed; stop checking other players for this cart
+			end
+		end
+	end
+end
+
 function EconomyService.Init()
 	remotesFolder = RemotesSetup.CreateAll()
 
@@ -339,6 +490,11 @@ function EconomyService.Init()
 	requestReturnCarts.OnServerInvoke = function(player: Player)
 		return handleRequestReturnCarts(player)
 	end
+
+	local requestDumpCart = remotesFolder:FindFirstChild("RequestDumpCart") :: RemoteEvent
+	requestDumpCart.OnServerEvent:Connect(handleRequestDumpCart)
+
+	RunService.Heartbeat:Connect(dumpedCartHeartbeat)
 
 	Players.PlayerAdded:Connect(function(player: Player)
 		PlayerDataService.WaitForLoad(player) -- see PlayerDataService's own comment on why this matters

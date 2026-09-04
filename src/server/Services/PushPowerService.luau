@@ -15,6 +15,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local EconomyMath = require(ReplicatedStorage.Shared.Modules.EconomyMath)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local UpgradeService = require(script.Parent.UpgradeService)
@@ -22,8 +23,6 @@ local WorldService = require(script.Parent.WorldService)
 local IndexService = require(script.Parent.IndexService)
 
 local PushPowerService = {}
-
-local ZONES_PER_WORLD = EconomyConfig.Cart.ZonesPerWorld
 
 local unlockedZoneIndex: { [Player]: { [number]: number } } = {}
 local remotesFolder: Folder
@@ -61,9 +60,11 @@ function PushPowerService.GetEffectivePushPower(player: Player): number
 	return EconomyMath.GetEffectivePushPower(level, rebirthPushPowerMultiplier, indexBonus)
 end
 
-function PushPowerService.GetSpeedFactorForZone(player: Player, worldId: number, zoneIndex: number): number
+-- World 1 economy rebalance: zone-only now -- World no longer factors into
+-- the requirement at all (see EconomyConfig.PushPower's own comment).
+function PushPowerService.GetSpeedFactorForZone(player: Player, zoneIndex: number): number
 	local effectivePower = PushPowerService.GetEffectivePushPower(player)
-	local requirement = EconomyMath.GetPowerRequirement(worldId, zoneIndex)
+	local requirement = EconomyMath.GetPowerRequirement(zoneIndex)
 	return EconomyMath.GetSpeedFactor(effectivePower, requirement)
 end
 
@@ -96,16 +97,20 @@ end
 -- World -- each World's frontier only matters while the player is there.
 function PushPowerService.CheckZoneUnlocks(player: Player)
 	local worldId = WorldService.GetCurrentWorld(player)
+	-- Phase 2: per-World zone count, not a shared global -- the Main Lane
+	-- (World5) runs 13 Zones while the Rebirth-gated bonus Worlds stay at 8.
+	local worldEntry = WorldData.GetWorld(worldId)
+	local zoneCount = worldEntry and worldEntry.ZoneCount or EconomyConfig.Cart.ZonesPerWorld
 	local current = getUnlocked(player, worldId)
-	if current >= ZONES_PER_WORLD then
+	if current >= zoneCount then
 		return
 	end
 
 	local effectivePower = PushPowerService.GetEffectivePushPower(player)
 	local changed = false
 
-	while current < ZONES_PER_WORLD do
-		local nextRequirement = EconomyMath.GetPowerRequirement(worldId, current + 1)
+	while current < zoneCount do
+		local nextRequirement = EconomyMath.GetPowerRequirement(current + 1)
 		if EconomyMath.CanAdvanceToZone(effectivePower, nextRequirement) then
 			current += 1
 			changed = true
@@ -128,7 +133,7 @@ function PushPowerService.Init()
 
 	Players.PlayerAdded:Connect(function(player: Player)
 		getWorldUnlocks(player)
-		pushZoneData(player, 1)
+		pushZoneData(player, WorldData.GetMainLane().Id)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)

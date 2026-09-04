@@ -116,7 +116,7 @@ local trailPoints: { CFrame } = {}
 local visualCarts: { VisualCart } = {}
 local returnDebounce = false
 local rollingWheelsSound: Sound
-local currentWorld = 1
+local currentWorld = WorldData.GetMainLane().Id
 local corralsByWorld: { [number]: BasePart } = {}
 
 -- Strips any pitch/roll a trail sample might carry (Humanoids normally stay
@@ -532,6 +532,38 @@ local function playCorralGlow(corral: BasePart, isPersonalBest: boolean)
 	end
 end
 
+-- World 1 rebalance QA: the server call blocks for the real resistance-gated
+-- dwell duration (§4.2) with zero client feedback while it's in flight --
+-- at the old World5-inflated PowerRequirement values that dwell floored out
+-- at ~12.5s of the player just standing there with nothing visibly
+-- happening, which read as "buggy"/frozen rather than "slow." Now that the
+-- requirement is zone-only (a fresh player's dwell is ~1.5-2s), this
+-- immediate start-pulse closes the rest of the gap -- instant acknowledgment
+-- the moment the pad registers the touch, before the server round-trip
+-- resolves at all.
+local function playCorralStartPulse(corral: BasePart)
+	local light = Instance.new("PointLight")
+	light.Name = "PH_CorralStartPulse"
+	light.Color = Color3.fromRGB(200, 255, 210)
+	light.Range = 16
+	light.Brightness = 0
+	light.Parent = corral
+
+	local up = TweenService:Create(light, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Brightness = 3 })
+	up:Play()
+	up.Completed:Connect(function(state: Enum.PlaybackState)
+		if state == Enum.PlaybackState.Completed then
+			local down = TweenService:Create(light, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Brightness = 0 })
+			down:Play()
+			down.Completed:Connect(function()
+				light:Destroy()
+			end)
+		end
+	end)
+
+	SoundController.PlaySFX("UIClick", { Volume = 0.5 })
+end
+
 -- Phase 3: the server call itself now blocks for the real resistance-gated
 -- dwell duration (§4.2), so debounce just needs to cover the in-flight
 -- InvokeServer call -- no fixed extra wait needed.
@@ -540,6 +572,11 @@ local function tryReturnCarts(remotesFolder: Folder, uiAnimationController: any)
 		return
 	end
 	returnDebounce = true
+
+	local startCorral = corralsByWorld[currentWorld]
+	if startCorral then
+		playCorralStartPulse(startCorral)
+	end
 
 	local requestReturnCarts = remotesFolder:FindFirstChild("RequestReturnCarts") :: RemoteFunction
 	local result = requestReturnCarts:InvokeServer()
@@ -614,6 +651,15 @@ function TrainController.Init(initialSnapshot: { trainCount: number?, currentWor
 	local legendaryClaimed = remotesFolder:FindFirstChild("LegendaryCartClaimed") :: RemoteEvent
 	legendaryClaimed.OnClientEvent:Connect(function(data: { position: Vector3 })
 		playLegendaryCollectionBeam(data.position)
+	end)
+
+	-- Phase 4 §9.4: the "one button" offline-earnings claim panel is this
+	-- toast -- the cash is already granted server-side by the time this
+	-- fires, so there's nothing left to click; reuses the same
+	-- cash-toast template/pattern as a Corral return.
+	local offlineEarningsReady = remotesFolder:FindFirstChild("OfflineEarningsReady") :: RemoteEvent
+	offlineEarningsReady.OnClientEvent:Connect(function(data: { cashEarned: number })
+		uiAnimationController.ShowNotification("ReturnComplete", "Welcome back! +$" .. FormatNumber.Format(data.cashEarned))
 	end)
 
 	RunService.Heartbeat:Connect(onHeartbeat)

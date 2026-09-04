@@ -27,7 +27,11 @@ local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local MonetizationService = require(script.Parent.MonetizationService)
 
-local economyServiceCache: { TrySpendCash: (Player, number) -> boolean, GetCash: (Player) -> number }? = nil
+local economyServiceCache: {
+	TrySpendCash: (Player, number) -> boolean,
+	GetCash: (Player) -> number,
+	GetTrainLoad: (Player) -> number,
+}? = nil
 local function getEconomyService()
 	if not economyServiceCache then
 		economyServiceCache = require(script.Parent.EconomyService) :: any
@@ -39,7 +43,7 @@ type UpgradeStatName = EconomyConfig.UpgradeStatName
 
 local UpgradeService = {}
 
-local STAT_NAMES: { UpgradeStatName } = { "capacity", "agility", "mobility", "range", "pushPower" }
+local STAT_NAMES: { UpgradeStatName } = { "capacity", "mobility", "range", "pushPower" }
 local MAX_PURCHASE_QUANTITY = 999 -- sane upper bound; "Buy Max Affordable" UI lands in Phase 9
 
 local remotesFolder: Folder
@@ -59,17 +63,20 @@ function UpgradeService.GetCapacity(player: Player): number
 	return EconomyMath.GetTrainCapacity(getLevels(player).capacity) + MonetizationService.GetCapacityBonus(player)
 end
 
-local function applyMobilityEffect(player: Player)
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		humanoid.WalkSpeed = EconomyMath.GetMobilityWalkSpeed(getLevels(player).mobility)
-	end
-end
-
 -- §13 QA: RequestPlayerDataSnapshot's source for this Service's slice.
+-- Lost Cart GDD v3 �6.1: trainCapacity/trainSpeedFactor are pushed here too
+-- (not just raw upgrade levels) so the client HUD never has to duplicate the
+-- capacity-bonus or speed-curve math -- the server stays the one source of
+-- truth for both.
 function UpgradeService.GetSnapshot(player: Player): { [string]: any }
-	return { upgrades = table.clone(getLevels(player)) }
+	local levels = getLevels(player)
+	local load = getEconomyService().GetTrainLoad(player)
+	local pullPowerKg = EconomyMath.GetPullPowerKg(levels.pushPower)
+	return {
+		upgrades = table.clone(levels),
+		trainCapacity = UpgradeService.GetCapacity(player),
+		trainSpeedFactor = EconomyMath.GetTrainSpeedFactor(load, pullPowerKg),
+	}
 end
 
 local function pushUpgradeData(player: Player)
@@ -77,14 +84,33 @@ local function pushUpgradeData(player: Player)
 	playerDataUpdated:FireClient(player, UpgradeService.GetSnapshot(player))
 end
 
+-- Lost Cart GDD v3 �6.1: WalkSpeed is Mobility's base speed scaled by the
+-- real Load-vs-PullPower train speed curve -- the one place Humanoid.WalkSpeed
+-- ever gets set, so anything that changes either input (a Mobility/Push
+-- Power purchase, or the train's Load changing via a claim/return/dump) must
+-- call this to recompute it. Exported so EconomyService (which owns Load)
+-- can trigger a recompute without duplicating the formula. Also re-pushes
+-- the snapshot so the client HUD's capacity/speed bars stay live.
+function UpgradeService.RefreshWalkSpeed(player: Player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local levels = getLevels(player)
+		local baseSpeed = EconomyMath.GetMobilityWalkSpeed(levels.mobility)
+		local load = getEconomyService().GetTrainLoad(player)
+		local pullPowerKg = EconomyMath.GetPullPowerKg(levels.pushPower)
+		humanoid.WalkSpeed = baseSpeed * EconomyMath.GetTrainSpeedFactor(load, pullPowerKg)
+	end
+	pushUpgradeData(player)
+end
+
 -- Public API consumed by RebirthService (�4.4: "Push Power level -- back to
--- base"). Capacity/Agility/Mobility/Range are explicitly never touched here
--- -- �4.4's persistent list -- Rebirth must never call this for anything but
--- pushPower.
+-- base"). Capacity/Mobility/Range are explicitly never touched here -- �4.4's
+-- persistent list -- Rebirth must never call this for anything but pushPower.
 function UpgradeService.ResetPushPower(player: Player)
 	local levels = getLevels(player)
 	levels.pushPower = 0
-	pushUpgradeData(player)
+	UpgradeService.RefreshWalkSpeed(player) -- Lost Cart GDD v3 �6.1: PullPower just reset, re-derive WalkSpeed + re-push
 end
 
 local function handleRequestPurchaseUpgrade(player: Player, statName: string, quantity: number?)
@@ -112,10 +138,10 @@ local function handleRequestPurchaseUpgrade(player: Player, statName: string, qu
 	end
 
 	if purchased > 0 then
-		if stat == "mobility" then
-			applyMobilityEffect(player)
-		end
-		pushUpgradeData(player)
+		-- Always refresh, not just for mobility/pushPower -- it also re-pushes
+		-- the snapshot (trainCapacity changes on a Capacity purchase too), and
+		-- recomputing WalkSpeed for an unrelated stat is harmless (same value).
+		UpgradeService.RefreshWalkSpeed(player)
 	end
 
 	return {
@@ -145,10 +171,10 @@ function UpgradeService.Init()
 		-- the character that may already exist, in addition to (not instead
 		-- of) every future spawn.
 		if player.Character then
-			applyMobilityEffect(player)
+			UpgradeService.RefreshWalkSpeed(player)
 		end
 		player.CharacterAdded:Connect(function()
-			applyMobilityEffect(player)
+			UpgradeService.RefreshWalkSpeed(player)
 		end)
 	end)
 

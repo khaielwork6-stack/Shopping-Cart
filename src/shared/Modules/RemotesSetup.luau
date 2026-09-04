@@ -18,6 +18,17 @@ local REMOTES: { [string]: RemoteKind } = {
 	RequestEnterWorldPortal = "RemoteFunction",
 	RequestUpdateSettings = "RemoteFunction",
 
+	-- Lost Cart GDD v3 �6.2: unhooks the back cart. A RemoteEvent, not a
+	-- RemoteFunction -- fire-and-forget like every other input-driven action,
+	-- the client learns the outcome via the usual PlayerDataUpdated push.
+	RequestDumpCart = "RemoteEvent",
+
+	-- Phase 4 �9: Base item placement -- server-authoritative swap, so both
+	-- need a real response (success/failure), unlike the fire-and-forget
+	-- events above.
+	RequestPlaceItem = "RemoteFunction",
+	RequestRemoveItem = "RemoteFunction",
+
 	-- §13 QA: one-shot pull the client fires at boot, before any Controller
 	-- renders anything -- see server/init.server.luau's own comment on the
 	-- join-time race this fixes.
@@ -48,6 +59,19 @@ local REMOTES: { [string]: RemoteKind } = {
 	-- the same World, not just the one player CartClaimed already targets.
 	LegendaryCartSpawned = "RemoteEvent",
 	LegendaryCartClaimed = "RemoteEvent",
+
+	-- Phase 4 �9.4: fired once at join if there was a real offline gap to
+	-- pay out -- the client's "one button" claim panel is a receipt toast
+	-- (UIAnimationController.ShowNotification), the cash is already granted
+	-- server-side by the time this fires.
+	OfflineEarningsReady = "RemoteEvent",
+
+	-- Phase 5 �10: server -> client, fired at the target on a landed bat
+	-- hit -- cosmetic-only (screen shake/thud SFX). The knockdown/ragdoll
+	-- itself needs no remote at all: it's a real Motor6D/BallSocketConstraint
+	-- + Humanoid.PlatformStand change on a real server-owned Instance, which
+	-- replicates to every client on its own.
+	PlayerKnockedDown = "RemoteEvent",
 }
 
 local RemotesSetup = {}

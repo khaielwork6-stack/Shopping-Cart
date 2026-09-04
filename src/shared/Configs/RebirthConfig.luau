@@ -14,7 +14,7 @@ RebirthConfig.ResetsOnRebirth = {
 
 RebirthConfig.PersistsAcrossRebirth = {
 	"Total Level",
-	"Capacity / Agility / Mobility / Range levels",
+	"Capacity / Mobility / Range levels",
 	"Rebirth count",
 	"Push Power Multiplier",
 	"Cash Multiplier",

@@ -31,13 +31,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EconomyConfig = require(ReplicatedStorage.Shared.Configs.EconomyConfig)
 local LootData = require(ReplicatedStorage.Shared.Configs.LootData)
+local WorldData = require(ReplicatedStorage.Shared.Configs.WorldData)
 local Migrations = require(script.Parent.Parent.Migrations)
 local RemotesSetup = require(ReplicatedStorage.Shared.Modules.RemotesSetup)
 local RateLimiter = require(ReplicatedStorage.Shared.Modules.RateLimiter)
 
 export type UpgradeLevels = {
 	capacity: number,
-	agility: number,
 	mobility: number,
 	range: number,
 	pushPower: number,
@@ -62,6 +62,12 @@ export type LifetimeStats = {
 	bestSingleReturn: number, -- Phase 10 (§8): drives the cash-popup "personal best" gold tint
 }
 
+-- `false` for an empty slot, never `nil` -- a `nil` hole in the middle of an
+-- array breaks positional indexing the moment it round-trips through
+-- DataStore JSON serialization (table.insert/ipairs both stop at the first
+-- nil), which would silently corrupt every slot after the first empty one.
+export type BaseSlot = { itemId: string } | boolean
+
 export type PlayerDataSchema = {
 	version: number,
 	cash: number,
@@ -78,16 +84,19 @@ export type PlayerDataSchema = {
 	settings: Settings,
 	lifetimeStats: LifetimeStats,
 	grantedPurchaseIds: { [string]: boolean }, -- Phase 11 (§6.6): every ProcessReceipt PurchaseId ever granted, so a retried receipt after a mid-grant crash can never double-grant
+	baseSlots: { BaseSlot }, -- Phase 4: fixed-length array, resized to GetSlotCount(player) on load/rebirth; each entry is either an item reference or nil (empty)
+	lastOnlineTimestamp: number, -- Phase 4: os.time() at last save/leave, source of truth for offline-earnings -- never a client-reported elapsed time (§18)
 	lastSaved: number,
 }
 
 local PlayerDataService = {}
 
 -- This is the first Phase this project has ever persisted data -- there is
--- no real prior schema history, so version starts at 1 (the Guide's own
+-- no real prior schema history, so version started at 1 (the Guide's own
 -- example schema shows "version = 3" purely as sample/illustrative data,
--- not a mandate to start there).
-local CURRENT_VERSION = 1
+-- not a mandate to start there). Bumped to 2 for the Lost Cart migration
+-- Phase 2 currentWorld/unlockedWorlds fix -- see Migrations.Steps[1].
+local CURRENT_VERSION = 2
 
 local DEFAULT_PLAYER_DATA: PlayerDataSchema = {
 	version = CURRENT_VERSION,
@@ -97,14 +106,16 @@ local DEFAULT_PLAYER_DATA: PlayerDataSchema = {
 	currentXP = 0,
 	totalLevel = 0,
 	rebirthCount = 0,
-	upgrades = { capacity = 0, agility = 0, mobility = 0, range = 0, pushPower = 0 },
-	unlockedWorlds = { [1] = true },
-	currentWorld = 1,
+	upgrades = { capacity = 0, mobility = 0, range = 0, pushPower = 0 },
+	unlockedWorlds = { [WorldData.GetMainLane().Id] = true },
+	currentWorld = WorldData.GetMainLane().Id,
 	lootBag = {},
 	indexDiscovered = {},
 	settings = { musicVolume = 0.5, sfxVolume = 0.8, uiScale = 1.0 },
 	lifetimeStats = { totalCashEarned = 0, totalCartsReturned = 0, totalRebirths = 0, bestSingleReturn = 0 },
 	grantedPurchaseIds = {},
+	baseSlots = { false, false, false, false, false, false, false, false }, -- 8 starting slots (§9.1), +2 per Rebirth -- see BaseService.ensureSlotCount
+	lastOnlineTimestamp = 0, -- 0 sentinel means "never saved before" -- BaseService treats this as "no offline gap to pay out"
 	lastSaved = 0,
 }
 
@@ -238,7 +249,7 @@ local function validateAndBackfill(raw: any): PlayerDataSchema
 			end
 		end
 	end
-	data.unlockedWorlds[1] = true -- always available, per PushPowerService/WorldService's own base case
+	data.unlockedWorlds[WorldData.GetMainLane().Id] = true -- always available, per WorldService's own base case
 
 	if type(raw.lootBag) == "table" then
 		local validBag = {}
@@ -295,6 +306,25 @@ local function validateAndBackfill(raw: any): PlayerDataSchema
 		end
 	end
 
+	-- Phase 4: each entry is `false` (empty) or a real, still-existing item
+	-- reference -- never trust a stale itemId from a since-removed LootData
+	-- entry (matches lootBag's own validation just above in spirit).
+	if type(raw.baseSlots) == "table" then
+		local validSlots = {}
+		for i, slot in raw.baseSlots do
+			if type(slot) == "table" and type(slot.itemId) == "string" and LootData.GetItem(slot.itemId) then
+				validSlots[i] = { itemId = slot.itemId }
+			else
+				validSlots[i] = false
+			end
+		end
+		data.baseSlots = validSlots
+	end
+
+	if type(raw.lastOnlineTimestamp) == "number" then
+		data.lastOnlineTimestamp = math.max(0, raw.lastOnlineTimestamp)
+	end
+
 	return Migrations.Apply(data, data.version, CURRENT_VERSION)
 end
 
@@ -322,6 +352,11 @@ local function serializeForSave(data: PlayerDataSchema): any
 	copy.grantedPurchaseIds = grantedArray
 
 	copy.lastSaved = os.time()
+	-- Phase 4: refreshed on every save (autosave, immediate-save, and the
+	-- final leave-save), so it always reflects the last moment this player
+	-- was actually known to be online -- the offline-earnings clock starts
+	-- from here, never from a client-reported value (§18).
+	copy.lastOnlineTimestamp = os.time()
 	return copy
 end
 
